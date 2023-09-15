@@ -29,13 +29,43 @@ type ProxmoxMachineSpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// Foo is an example field of ProxmoxMachine. Edit proxmoxmachine_types.go to remove/update
-	Foo string `json:"foo,omitempty"`
+	Template   string                  `json:"template"`
+	Resources  ProxmoxMachineResources `json:"resources"`
+	Networks   []ProxmoxNetwork        `json:"networks"`
+	Disks      []ProxmoxDisk           `json:"disks"`
+	TargetNode string                  `json:"target_node"`
+	OnBoot     bool                    `json:"onboot,omitempty"`
+	Scsihw     string                  `json:"scsihw,omitempty"`
+}
+
+type ProxmoxMachineResources struct {
+	Memory     int `json:"memory,omitempty"`
+	CpuCores   int `json:"cpu_cores,omitempty"`
+	CpuSockets int `json:"cpu_sockets,omitempty"`
+}
+
+type ProxmoxNetwork struct {
+	Model    string `json:"model"`
+	Bridge   string `json:"bridge"`
+	Firewall bool   `json:"firewall,omitempty"`
+	Backup   bool   `json:"backup,omitempty"`
+	Tag      string `json:"tag,omitempty"`
+}
+
+type ProxmoxDisk struct {
+	Type        string `json:"type,omitempty"`
+	Storage     string `json:"storage,omitempty"`
+	Size        string `json:"size,omitempty"`
+	StorageType string `json:"storage_type,omitempty"`
+	Backup      bool   `json:"backup,omitempty"`
 }
 
 // ProxmoxMachineStatus defines the observed state of ProxmoxMachine
 type ProxmoxMachineStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+	Vmid       int                `json:"vmid"`
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 //+kubebuilder:object:root=true
