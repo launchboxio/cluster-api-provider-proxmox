@@ -24,46 +24,43 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
-// ProxmoxMachineSpec defines the desired state of ProxmoxMachine
-type ProxmoxMachineSpec struct {
+// ProxmoxMachinePoolSpec defines thed desired state of ProxmoxMachinePool
+type ProxmoxMachinePoolSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
-	// Foo is an example field of ProxmoxMachine. Edit proxmoxmachine_types.go to remove/update
-	TargetNode string `json:"target_node,omitempty"`
-
+	// The number of instances to deploy in this machine pool
+	Instances          int                     `json:"instances"`
 	MachineTemplateRef *corev1.ObjectReference `json:"machine_template_ref"`
 }
 
-// ProxmoxMachineStatus defines the observed state of ProxmoxMachine
-type ProxmoxMachineStatus struct {
+// ProxmoxMachinePoolStatus defines the observed state of ProxmoxMachinePool
+type ProxmoxMachinePoolStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
-	Vmid       int                `json:"vmid"`
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
 
-// ProxmoxMachine is the Schema for the proxmoxmachines API
-type ProxmoxMachine struct {
+// ProxmoxMachinePool is the Schema for the proxmoxmachinepools API
+type ProxmoxMachinePool struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   ProxmoxMachineSpec   `json:"spec,omitempty"`
-	Status ProxmoxMachineStatus `json:"status,omitempty"`
+	Spec   ProxmoxMachinePoolSpec   `json:"spec,omitempty"`
+	Status ProxmoxMachinePoolStatus `json:"status,omitempty"`
 }
 
 //+kubebuilder:object:root=true
 
-// ProxmoxMachineList contains a list of ProxmoxMachine
-type ProxmoxMachineList struct {
+// ProxmoxMachinePoolList contains a list of ProxmoxMachinePool
+type ProxmoxMachinePoolList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []ProxmoxMachine `json:"items"`
+	Items           []ProxmoxMachinePool `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&ProxmoxMachine{}, &ProxmoxMachineList{})
+	SchemeBuilder.Register(&ProxmoxMachinePool{}, &ProxmoxMachinePoolList{})
 }
