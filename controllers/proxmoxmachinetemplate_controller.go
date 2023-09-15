@@ -18,40 +18,45 @@ package controllers
 
 import (
 	"context"
-	infrastructurev1alpha1 "github.com/launchboxio/cluster-api-provider-proxmox/api/v1alpha1"
+
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	infrastructurev1alpha1 "github.com/launchboxio/cluster-api-provider-proxmox/api/v1alpha1"
 )
 
-// ProxmoxClusterReconciler reconciles a ProxmoxCluster object
-type ProxmoxClusterReconciler struct {
+// ProxmoxMachineTemplateReconciler reconciles a ProxmoxMachineTemplate object
+type ProxmoxMachineTemplateReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 }
 
-//+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=proxmoxclusters,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=proxmoxclusters/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=proxmoxclusters/finalizers,verbs=update
+//+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=proxmoxmachinetemplates,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=proxmoxmachinetemplates/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=proxmoxmachinetemplates/finalizers,verbs=update
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 // TODO(user): Modify the Reconcile function to compare the state specified by
-// the ProxmoxCluster object against the actual cluster state, and then
+// the ProxmoxMachineTemplate object against the actual cluster state, and then
 // perform operations to make the cluster state reflect the state specified by
 // the user.
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.14.1/pkg/reconcile
-func (r *ProxmoxClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *ProxmoxMachineTemplateReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = log.FromContext(ctx)
+
+	// Machine Templates just specify common configuration to be used across node groups
+	// This is another no-op
 	return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *ProxmoxClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *ProxmoxMachineTemplateReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&infrastructurev1alpha1.ProxmoxCluster{}).
+		For(&infrastructurev1alpha1.ProxmoxMachineTemplate{}).
 		Complete(r)
 }

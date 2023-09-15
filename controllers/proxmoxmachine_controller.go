@@ -23,9 +23,12 @@ import (
 	"github.com/luthermonson/go-proxmox"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"net/http"
 	"strings"
 	"time"
+
+	errors2 "errors"
 
 	//"github.com/Telmate/proxmox-api-go/proxmox"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -46,12 +49,14 @@ type ProxmoxMachineReconciler struct {
 }
 
 const (
-	VirtualMachine = "VirtualMachine"
+	VirtualMachineInitializing = "VirtualMachineInitializing"
 )
 
 //+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=proxmoxmachines,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=proxmoxmachines/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=proxmoxmachines/finalizers,verbs=update
+
+const machineFinalizer = "infrastructure.cluster.x-k8s.io/finalizer"
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -88,19 +93,48 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
+	machineTemplate := &infrastructurev1alpha1.ProxmoxMachineTemplate{}
+	if err := r.Get(ctx, types.NamespacedName{
+		Name:      machine.Spec.MachineTemplateRef.Name,
+		Namespace: machine.Spec.MachineTemplateRef.Namespace,
+	}, machineTemplate); err != nil {
+		contextLogger.Error(err, "Failed getting machine template")
+		return ctrl.Result{}, err
+	}
+
 	if machine.GetDeletionTimestamp() != nil {
 		if controllerutil.ContainsFinalizer(machine, machineFinalizer) {
 			// TODO: Perform out of band cleanup
+			contextLogger.Info("Cleaning up machine for finalizer")
+			vm, err := loadVm(proxmoxClient, machine.Status.Vmid)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			err = remove(vm)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+
+			controllerutil.RemoveFinalizer(machine, machineFinalizer)
+			err = r.Update(context.TODO(), machine)
+			return ctrl.Result{}, err
 		}
 	}
 
-	node, err := proxmoxClient.Node("artemis")
+	// Fetch our VM template
+	clusterTemplate, err := getVmTemplate(proxmoxClient, machineTemplate.Spec.Template)
+	if err != nil || clusterTemplate == nil {
+		contextLogger.Error(err, "Failed to get VM template")
+		return ctrl.Result{}, err
+	}
+
+	node, err := proxmoxClient.Node(clusterTemplate.Node)
 	if err != nil {
 		contextLogger.Error(err, "Failed getting base node")
 		return ctrl.Result{}, err
 	}
 
-	template, err := node.VirtualMachine(9001)
+	template, err := node.VirtualMachine(int(clusterTemplate.VMID))
 	if err != nil {
 		contextLogger.Error(err, "Failed getting base template")
 		return ctrl.Result{}, err
@@ -110,6 +144,7 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// simply return. We want to keep creation / and CRD updates
 	// as idempotent as possible
 	if machine.Status.Vmid == 0 {
+
 		vmid, task, err := template.Clone(&proxmox.VirtualMachineCloneOptions{
 			Name: fmt.Sprintf("%s-%s", machine.Namespace, machine.Name),
 		})
@@ -119,20 +154,13 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, err
 		}
 
-		contextLogger.Info("Attaching finalizer")
-		if !controllerutil.ContainsFinalizer(machine, machineFinalizer) {
-			controllerutil.AddFinalizer(machine, machineFinalizer)
-		}
-
-		contextLogger.Info("Setting initializing status")
 		meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-			Type:    VirtualMachine,
-			Status:  metav1.ConditionFalse,
-			Reason:  "Initializing",
+			Type:    VirtualMachineInitializing,
+			Status:  metav1.ConditionTrue,
+			Reason:  "Creating",
 			Message: "VM Created, Initializing for first launch",
 		})
 
-		contextLogger.Info("Setting VMID on CRD")
 		machine.Status.Vmid = vmid
 		err = r.Status().Update(ctx, machine)
 		if err != nil {
@@ -150,8 +178,15 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, nil
 	}
 
+	if !controllerutil.ContainsFinalizer(machine, machineFinalizer) {
+		contextLogger.Info("Attaching finalizer")
+		controllerutil.AddFinalizer(machine, machineFinalizer)
+		err = r.Update(ctx, machine)
+		return ctrl.Result{}, err
+	}
+
 	// We should always have a new VM here. We query it to make sure
-	vm, err := node.VirtualMachine(machine.Status.Vmid)
+	vm, err := loadVm(proxmoxClient, machine.Status.Vmid)
 	if err != nil {
 		contextLogger.Error(err, "Failed getting VM status")
 		return ctrl.Result{}, err
@@ -161,26 +196,35 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// - Configure network, disks, etc
 	// - Migrate to a target node
 	// - Start the Virtual Machine
-	if meta.IsStatusConditionFalse(machine.Status.Conditions, VirtualMachine) {
-		task, err := vm.Config(vmInitializationOptions(machine)...)
+	if meta.IsStatusConditionTrue(machine.Status.Conditions, VirtualMachineInitializing) {
+		task, err := vm.Config(vmInitializationOptions(machine, machineTemplate)...)
 		if err != nil {
 			contextLogger.Error(err, "Failed to reconfigure VM")
 			return ctrl.Result{}, err
 		}
 
-		err = task.Wait(
-			time.Second*5,
-			time.Minute*10,
-		)
-		if err != nil {
+		if err = task.Wait(time.Second*5, time.Minute*10); err != nil {
 			contextLogger.Error(err, "Timed out waiting for VM to finish configuring")
 			return ctrl.Result{}, err
 		}
 
+		if vm.Node != machine.Spec.TargetNode {
+			contextLogger.Info(fmt.Sprintf("Moving VM to node %s", machine.Spec.TargetNode))
+			task, err := vm.Migrate(machine.Spec.TargetNode, "")
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+
+			if err = task.Wait(time.Second*5, time.Minute*10); err != nil {
+				contextLogger.Error(err, "Timed out waiting for VM to migrate")
+				return ctrl.Result{}, err
+			}
+		}
+
 		meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-			Type:    VirtualMachine,
-			Status:  metav1.ConditionTrue,
-			Reason:  "Initializing",
+			Type:    VirtualMachineInitializing,
+			Status:  metav1.ConditionFalse,
+			Reason:  "Completed",
 			Message: "VM initialization completed",
 		})
 		err = r.Status().Update(ctx, machine)
@@ -194,8 +238,9 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	// Lastly, check runtime settings. Things like CPU, memory, etc
 	// can be changed on an instance that has been initialized already
-	options := pendingChanges(machine, vm)
+	options := pendingChanges(machine, machineTemplate, vm)
 	if len(options) > 0 {
+		fmt.Println(options)
 		contextLogger.Info("VM out of sync, updating configuration")
 		task, err := vm.Config(options...)
 		if err != nil {
@@ -203,11 +248,7 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, err
 		}
 
-		err = task.Wait(
-			time.Second*5,
-			time.Minute*10,
-		)
-		if err != nil {
+		if err = task.Wait(time.Second*5, time.Minute*10); err != nil {
 			contextLogger.Error(err, "Timed out waiting for VM to finish configuring")
 			return ctrl.Result{}, err
 		}
@@ -226,14 +267,15 @@ func (r *ProxmoxMachineReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func vmInitializationOptions(machine *infrastructurev1alpha1.ProxmoxMachine) []proxmox.VirtualMachineOption {
+func vmInitializationOptions(machine *infrastructurev1alpha1.ProxmoxMachine, template *infrastructurev1alpha1.ProxmoxMachineTemplate) []proxmox.VirtualMachineOption {
 	options := []proxmox.VirtualMachineOption{
-		{Name: "memory", Value: machine.Spec.Resources.Memory},
-		{Name: "sockets", Value: machine.Spec.Resources.CpuSockets},
-		{Name: "cores", Value: machine.Spec.Resources.CpuCores},
+		{Name: "memory", Value: template.Spec.Resources.Memory},
+		{Name: "sockets", Value: template.Spec.Resources.CpuSockets},
+		{Name: "cores", Value: template.Spec.Resources.CpuCores},
+		//{Name: "node", Value: machine.Spec.TargetNode},
 	}
 
-	for idx, network := range machine.Spec.Networks {
+	for idx, network := range template.Spec.Networks {
 		options = append(options, proxmox.VirtualMachineOption{
 			Name: fmt.Sprintf("net%d", idx),
 			Value: strings.Join([]string{
@@ -246,22 +288,97 @@ func vmInitializationOptions(machine *infrastructurev1alpha1.ProxmoxMachine) []p
 	return options
 }
 
-func pendingChanges(machine *infrastructurev1alpha1.ProxmoxMachine, vm *proxmox.VirtualMachine) []proxmox.VirtualMachineOption {
+func pendingChanges(machine *infrastructurev1alpha1.ProxmoxMachine, template *infrastructurev1alpha1.ProxmoxMachineTemplate, vm *proxmox.VirtualMachine) []proxmox.VirtualMachineOption {
 	opts := []proxmox.VirtualMachineOption{}
 
-	if vm.CPUs != machine.Spec.Resources.CpuCores {
+	if vm.CPUs != template.Spec.Resources.CpuCores {
 		opts = append(opts, proxmox.VirtualMachineOption{
 			Name:  "cores",
-			Value: machine.Spec.Resources.CpuCores,
+			Value: template.Spec.Resources.CpuCores,
 		})
 	}
 
-	if int(vm.Mem) != machine.Spec.Resources.Memory {
+	// TODO: Due to differences in storage unit, memory
+	// always shows as a change. Fine for now, but should
+	// be addressed
+	if int(vm.MaxMem) != template.Spec.Resources.Memory {
 		opts = append(opts, proxmox.VirtualMachineOption{
 			Name:  "memory",
-			Value: machine.Spec.Resources.Memory,
+			Value: template.Spec.Resources.Memory,
 		})
 	}
 
 	return opts
+}
+
+// TODO: Remove a requirement for Cluster setup. Folks should be able
+// to run ClusterAPI on a single proxmox instance
+func getVmTemplate(px *proxmox.Client, templateName string) (*proxmox.ClusterResource, error) {
+	cluster, err := px.Cluster()
+	if err != nil {
+		return nil, err
+	}
+
+	virtualMachines, err := cluster.Resources("vm")
+	if err != nil {
+		return nil, err
+	}
+
+	template := &proxmox.ClusterResource{}
+	for _, virtualMachine := range virtualMachines {
+		if virtualMachine.Name == templateName {
+			template = virtualMachine
+		}
+	}
+
+	return template, nil
+}
+
+func loadVm(px *proxmox.Client, vmid int) (*proxmox.VirtualMachine, error) {
+	cluster, err := px.Cluster()
+	if err != nil {
+		return nil, err
+	}
+
+	virtualMachines, err := cluster.Resources("vm")
+	if err != nil {
+		return nil, err
+	}
+
+	template := &proxmox.ClusterResource{}
+	for _, virtualMachine := range virtualMachines {
+		if int(virtualMachine.VMID) == vmid {
+			template = virtualMachine
+		}
+	}
+
+	if template == nil {
+		return nil, errors2.New("Failed to find VM in cluster")
+	}
+
+	node, err := px.Node(template.Node)
+	if err != nil {
+		return nil, err
+	}
+
+	return node.VirtualMachine(int(template.VMID))
+}
+
+func remove(vm *proxmox.VirtualMachine) error {
+	task, err := vm.Stop()
+	if err != nil {
+		return err
+	}
+	if err = task.Wait(time.Second*5, time.Minute*10); err != nil {
+		return err
+	}
+
+	task, err = vm.Delete()
+	if err != nil {
+		return err
+	}
+	if err = task.Wait(time.Second*5, time.Minute*10); err != nil {
+		return err
+	}
+	return nil
 }

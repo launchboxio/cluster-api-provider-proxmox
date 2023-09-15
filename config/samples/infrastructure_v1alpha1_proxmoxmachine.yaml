@@ -10,17 +10,7 @@ metadata:
   name: machine1
   namespace: default
 spec:
-  template: "VM 9001"
-  resources:
-    memory: 4096
-    cpu_cores: 4
-    cpu_sockets: 1
-  disks:
-    - type: scsi
-      size: "32G"
-      storage: "storage"
-  scsihw: "virtio-scsi-pci"
-  networks:
-    - model: virtio
-      bridge: vmbr1
-  target_node: aphrodite
+  machine_template_ref:
+    name: proxmoxmachinetemplate-sample
+    namespace: default
+  target_node: athena

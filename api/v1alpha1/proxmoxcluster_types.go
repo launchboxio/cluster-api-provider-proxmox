@@ -17,7 +17,9 @@ limitations under the License.
 package v1alpha1
 
 import (
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -28,14 +30,20 @@ type ProxmoxClusterSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
-	// Foo is an example field of ProxmoxCluster. Edit proxmoxcluster_types.go to remove/update
-	Foo string `json:"foo,omitempty"`
+	ControlPlaneEndpoint clusterv1.APIEndpoint `json:"control_plane_endpoint"`
+
+	// Secret with credentials for accessing the Proxmox API
+	CredentialsRef v1.SecretReference `json:"credentialsRef,omitempty"`
 }
 
 // ProxmoxClusterStatus defines the observed state of ProxmoxCluster
 type ProxmoxClusterStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+	Ready bool `json:"ready"`
+
+	Conditions     clusterv1.Conditions     `json:"conditions,omitempty"`
+	FailureDomains clusterv1.FailureDomains `json:"failureDomains,omitempty"`
 }
 
 //+kubebuilder:object:root=true
