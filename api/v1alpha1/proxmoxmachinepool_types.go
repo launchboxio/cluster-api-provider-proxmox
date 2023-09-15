@@ -17,56 +17,50 @@ limitations under the License.
 package v1alpha1
 
 import (
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
-// ProxmoxClusterSpec defines the desired state of ProxmoxCluster
-type ProxmoxClusterSpec struct {
+// ProxmoxMachinePoolSpec defines thed desired state of ProxmoxMachinePool
+type ProxmoxMachinePoolSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
-	ControlPlaneEndpoint clusterv1.APIEndpoint `json:"control_plane_endpoint"`
-
-	// Secret with credentials for accessing the Proxmox API
-	CredentialsRef v1.SecretReference `json:"credentialsRef,omitempty"`
+	// The number of instances to deploy in this machine pool
+	Instances          int                     `json:"instances"`
+	MachineTemplateRef *corev1.ObjectReference `json:"machine_template_ref"`
 }
 
-// ProxmoxClusterStatus defines the observed state of ProxmoxCluster
-type ProxmoxClusterStatus struct {
+// ProxmoxMachinePoolStatus defines the observed state of ProxmoxMachinePool
+type ProxmoxMachinePoolStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
-	Ready bool `json:"ready"`
-
-	Conditions     clusterv1.Conditions     `json:"conditions,omitempty"`
-	FailureDomains clusterv1.FailureDomains `json:"failureDomains,omitempty"`
 }
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
 
-// ProxmoxCluster is the Schema for the proxmoxclusters API
-type ProxmoxCluster struct {
+// ProxmoxMachinePool is the Schema for the proxmoxmachinepools API
+type ProxmoxMachinePool struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   ProxmoxClusterSpec   `json:"spec,omitempty"`
-	Status ProxmoxClusterStatus `json:"status,omitempty"`
+	Spec   ProxmoxMachinePoolSpec   `json:"spec,omitempty"`
+	Status ProxmoxMachinePoolStatus `json:"status,omitempty"`
 }
 
 //+kubebuilder:object:root=true
 
-// ProxmoxClusterList contains a list of ProxmoxCluster
-type ProxmoxClusterList struct {
+// ProxmoxMachinePoolList contains a list of ProxmoxMachinePool
+type ProxmoxMachinePoolList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []ProxmoxCluster `json:"items"`
+	Items           []ProxmoxMachinePool `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&ProxmoxCluster{}, &ProxmoxClusterList{})
+	SchemeBuilder.Register(&ProxmoxMachinePool{}, &ProxmoxMachinePoolList{})
 }

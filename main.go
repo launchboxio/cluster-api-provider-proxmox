@@ -103,6 +103,20 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "ProxmoxCluster")
 		os.Exit(1)
 	}
+	if err = (&controllers.ProxmoxMachineTemplateReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ProxmoxMachineTemplate")
+		os.Exit(1)
+	}
+	if err = (&controllers.ProxmoxMachinePoolReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ProxmoxMachinePool")
+		os.Exit(1)
+	}
 	//+kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

@@ -7,6 +7,10 @@ metadata:
     app.kubernetes.io/part-of: cluster-api-provider-proxmox
     app.kubernetes.io/managed-by: kustomize
     app.kubernetes.io/created-by: cluster-api-provider-proxmox
-  name: proxmoxmachine-sample
+  name: machine1
+  namespace: default
 spec:
-  # TODO(user): Add fields here
+  machine_template_ref:
+    name: proxmoxmachinetemplate-sample
+    namespace: default
+  target_node: athena
