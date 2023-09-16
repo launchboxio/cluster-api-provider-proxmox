@@ -19,7 +19,10 @@ package controllers
 import (
 	"context"
 	infrastructurev1alpha1 "github.com/launchboxio/cluster-api-provider-proxmox/api/v1alpha1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/cluster-api/util"
+	"sigs.k8s.io/cluster-api/util/annotations"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -45,7 +48,37 @@ type ProxmoxClusterReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.14.1/pkg/reconcile
 func (r *ProxmoxClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = log.FromContext(ctx)
+	contextLogger := log.FromContext(ctx)
+
+	proxmoxCluster := &infrastructurev1alpha1.ProxmoxCluster{}
+	if err := r.Get(ctx, req.NamespacedName, proxmoxCluster); err != nil {
+		if errors.IsNotFound(err) {
+			return ctrl.Result{}, nil
+		}
+		contextLogger.Error(err, "Failed getting ProxmoxCluster")
+		return ctrl.Result{}, err
+	}
+
+	cluster, err := util.GetOwnerCluster(ctx, r.Client, proxmoxCluster.ObjectMeta)
+	if err != nil {
+		contextLogger.Error(err, "Failed getting owning cluster")
+		return ctrl.Result{}, err
+	}
+
+	if cluster == nil {
+		contextLogger.Info("Cluster controller doesnt have owner ref yet")
+		return ctrl.Result{}, nil
+	}
+
+	if annotations.IsPaused(cluster, proxmoxCluster) {
+		contextLogger.Info("Cluster / ProxmoxCluster paused")
+		return ctrl.Result{}, nil
+	}
+
+	proxmoxCluster.Status.Ready = true
+
+	// TODO: Check that the API server itself is available
+
 	return ctrl.Result{}, nil
 }
 

@@ -25,6 +25,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"net/http"
+	"sigs.k8s.io/cluster-api/util"
+	"sigs.k8s.io/cluster-api/util/annotations"
 	"strings"
 	"time"
 
@@ -83,8 +85,8 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		proxmox.WithHTTPClient(insecureHTTPClient),
 	)
 
-	machine := &infrastructurev1alpha1.ProxmoxMachine{}
-	if err := r.Get(ctx, req.NamespacedName, machine); err != nil {
+	proxmoxMachine := &infrastructurev1alpha1.ProxmoxMachine{}
+	if err := r.Get(ctx, req.NamespacedName, proxmoxMachine); err != nil {
 		if errors.IsNotFound(err) {
 			contextLogger.Info("ProxmoxMachine resource not found, must be deleted")
 			return ctrl.Result{}, nil
@@ -93,20 +95,57 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
+	machine, err := util.GetOwnerMachine(ctx, r.Client, proxmoxMachine.ObjectMeta)
+	if err != nil {
+		contextLogger.Error(err, "getting owning machine")
+		return ctrl.Result{}, fmt.Errorf("unable to get machine owner: %w", err)
+	}
+
+	if machine == nil {
+		contextLogger.Info("Machine controller has not set OwnerRef")
+		return ctrl.Result{}, nil
+	}
+
+	cluster, err := util.GetClusterFromMetadata(ctx, r.Client, machine.ObjectMeta)
+	if err != nil {
+		contextLogger.Info("Machine is missing cluster label or cluster does not exist")
+		return ctrl.Result{}, nil //nolint:nilerr // We ignore it intentionally.
+	}
+
+	if annotations.IsPaused(cluster, proxmoxMachine) {
+		contextLogger.Info("MicrovmMachine or linked Cluster is marked as paused. Won't reconcile")
+		return ctrl.Result{}, nil
+	}
+
+	proxmoxCluster := &infrastructurev1alpha1.ProxmoxCluster{}
+	proxmoxClusterName := client.ObjectKey{
+		Namespace: cluster.Spec.InfrastructureRef.Namespace,
+		Name:      cluster.Spec.InfrastructureRef.Name,
+	}
+
+	if getErr := r.Client.Get(ctx, proxmoxClusterName, proxmoxCluster); getErr != nil {
+		if errors.IsNotFound(getErr) {
+			contextLogger.Info("ProxmoxCluster is not ready yet")
+			return ctrl.Result{}, nil
+		}
+		contextLogger.Error(getErr, "error getting proxmoxcluster", "id", proxmoxClusterName)
+		return ctrl.Result{}, fmt.Errorf("error getting proxmoxcluster: %w", getErr)
+	}
+
 	machineTemplate := &infrastructurev1alpha1.ProxmoxMachineTemplate{}
 	if err := r.Get(ctx, types.NamespacedName{
-		Name:      machine.Spec.MachineTemplateRef.Name,
-		Namespace: machine.Spec.MachineTemplateRef.Namespace,
+		Name:      proxmoxMachine.Spec.MachineTemplateRef.Name,
+		Namespace: proxmoxMachine.Spec.MachineTemplateRef.Namespace,
 	}, machineTemplate); err != nil {
 		contextLogger.Error(err, "Failed getting machine template")
 		return ctrl.Result{}, err
 	}
 
-	if machine.GetDeletionTimestamp() != nil {
-		if controllerutil.ContainsFinalizer(machine, machineFinalizer) {
+	if proxmoxMachine.GetDeletionTimestamp() != nil {
+		if controllerutil.ContainsFinalizer(proxmoxMachine, machineFinalizer) {
 			// TODO: Perform out of band cleanup
 			contextLogger.Info("Cleaning up machine for finalizer")
-			vm, err := loadVm(proxmoxClient, machine.Status.Vmid)
+			vm, err := loadVm(proxmoxClient, proxmoxMachine.Status.Vmid)
 			if err != nil {
 				return ctrl.Result{}, err
 			}
@@ -115,8 +154,8 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				return ctrl.Result{}, err
 			}
 
-			controllerutil.RemoveFinalizer(machine, machineFinalizer)
-			err = r.Update(context.TODO(), machine)
+			controllerutil.RemoveFinalizer(proxmoxMachine, machineFinalizer)
+			err = r.Update(context.TODO(), proxmoxMachine)
 			return ctrl.Result{}, err
 		}
 	}
@@ -143,10 +182,10 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// Clone the machine, set the VMID in the status, and then
 	// simply return. We want to keep creation / and CRD updates
 	// as idempotent as possible
-	if machine.Status.Vmid == 0 {
+	if proxmoxMachine.Status.Vmid == 0 {
 
 		vmid, task, err := template.Clone(&proxmox.VirtualMachineCloneOptions{
-			Name: fmt.Sprintf("%s-%s", machine.Namespace, machine.Name),
+			Name: fmt.Sprintf("%s-%s", proxmoxMachine.Namespace, proxmoxMachine.Name),
 		})
 		contextLogger.Info("Creating VM")
 		if err != nil {
@@ -154,15 +193,15 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, err
 		}
 
-		meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+		meta.SetStatusCondition(&proxmoxMachine.Status.Conditions, metav1.Condition{
 			Type:    VirtualMachineInitializing,
 			Status:  metav1.ConditionTrue,
 			Reason:  "Creating",
 			Message: "VM Created, Initializing for first launch",
 		})
 
-		machine.Status.Vmid = vmid
-		err = r.Status().Update(ctx, machine)
+		proxmoxMachine.Status.Vmid = vmid
+		err = r.Status().Update(ctx, proxmoxMachine)
 		if err != nil {
 			contextLogger.Error(err, "Failed updating ProxmoxMachine status")
 			return ctrl.Result{}, err
@@ -178,15 +217,15 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, nil
 	}
 
-	if !controllerutil.ContainsFinalizer(machine, machineFinalizer) {
+	if !controllerutil.ContainsFinalizer(proxmoxMachine, machineFinalizer) {
 		contextLogger.Info("Attaching finalizer")
-		controllerutil.AddFinalizer(machine, machineFinalizer)
-		err = r.Update(ctx, machine)
+		controllerutil.AddFinalizer(proxmoxMachine, machineFinalizer)
+		err = r.Update(ctx, proxmoxMachine)
 		return ctrl.Result{}, err
 	}
 
 	// We should always have a new VM here. We query it to make sure
-	vm, err := loadVm(proxmoxClient, machine.Status.Vmid)
+	vm, err := loadVm(proxmoxClient, proxmoxMachine.Status.Vmid)
 	if err != nil {
 		contextLogger.Error(err, "Failed getting VM status")
 		return ctrl.Result{}, err
@@ -196,8 +235,8 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// - Configure network, disks, etc
 	// - Migrate to a target node
 	// - Start the Virtual Machine
-	if meta.IsStatusConditionTrue(machine.Status.Conditions, VirtualMachineInitializing) {
-		task, err := vm.Config(vmInitializationOptions(machine, machineTemplate)...)
+	if meta.IsStatusConditionTrue(proxmoxMachine.Status.Conditions, VirtualMachineInitializing) {
+		task, err := vm.Config(vmInitializationOptions(proxmoxMachine, machineTemplate)...)
 		if err != nil {
 			contextLogger.Error(err, "Failed to reconfigure VM")
 			return ctrl.Result{}, err
@@ -208,9 +247,9 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, err
 		}
 
-		if vm.Node != machine.Spec.TargetNode {
-			contextLogger.Info(fmt.Sprintf("Moving VM to node %s", machine.Spec.TargetNode))
-			task, err := vm.Migrate(machine.Spec.TargetNode, "")
+		if vm.Node != proxmoxMachine.Spec.TargetNode {
+			contextLogger.Info(fmt.Sprintf("Moving VM to node %s", proxmoxMachine.Spec.TargetNode))
+			task, err := vm.Migrate(proxmoxMachine.Spec.TargetNode, "")
 			if err != nil {
 				return ctrl.Result{}, err
 			}
@@ -221,13 +260,13 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 		}
 
-		meta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+		meta.SetStatusCondition(&proxmoxMachine.Status.Conditions, metav1.Condition{
 			Type:    VirtualMachineInitializing,
 			Status:  metav1.ConditionFalse,
 			Reason:  "Completed",
 			Message: "VM initialization completed",
 		})
-		err = r.Status().Update(ctx, machine)
+		err = r.Status().Update(ctx, proxmoxMachine)
 		if err != nil {
 			contextLogger.Error(err, "Failed updating ProxmoxMachine status")
 			return ctrl.Result{}, err
@@ -238,7 +277,7 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	// Lastly, check runtime settings. Things like CPU, memory, etc
 	// can be changed on an instance that has been initialized already
-	options := pendingChanges(machine, machineTemplate, vm)
+	options := pendingChanges(proxmoxMachine, machineTemplate, vm)
 	if len(options) > 0 {
 		fmt.Println(options)
 		contextLogger.Info("VM out of sync, updating configuration")
