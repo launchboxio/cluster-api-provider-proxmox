@@ -30,9 +30,9 @@ type ProxmoxMachineSpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// Foo is an example field of ProxmoxMachine. Edit proxmoxmachine_types.go to remove/update
-	TargetNode string `json:"target_node,omitempty"`
+	TargetNode string `json:"targetNode,omitempty"`
 
-	MachineTemplateRef *corev1.ObjectReference `json:"machine_template_ref"`
+	MachineTemplateRef *corev1.ObjectReference `json:"machineTemplateRef"`
 }
 
 // ProxmoxMachineStatus defines the observed state of ProxmoxMachine

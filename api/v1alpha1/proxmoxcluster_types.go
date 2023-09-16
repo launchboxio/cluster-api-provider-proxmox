@@ -30,7 +30,7 @@ type ProxmoxClusterSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
-	ControlPlaneEndpoint clusterv1.APIEndpoint `json:"control_plane_endpoint"`
+	ControlPlaneEndpoint clusterv1.APIEndpoint `json:"controlPlaneEndpoint"`
 
 	// Secret with credentials for accessing the Proxmox API
 	CredentialsRef v1.SecretReference `json:"credentialsRef,omitempty"`

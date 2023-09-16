@@ -40,8 +40,8 @@ type ProxmoxMachineTemplateSpec struct {
 
 type ProxmoxMachineResources struct {
 	Memory     int `json:"memory,omitempty"`
-	CpuCores   int `json:"cpu_cores,omitempty"`
-	CpuSockets int `json:"cpu_sockets,omitempty"`
+	CpuCores   int `json:"cpuCores,omitempty"`
+	CpuSockets int `json:"cpuSockets,omitempty"`
 }
 
 type ProxmoxNetwork struct {
@@ -56,7 +56,7 @@ type ProxmoxDisk struct {
 	Type        string `json:"type,omitempty"`
 	Storage     string `json:"storage,omitempty"`
 	Size        string `json:"size,omitempty"`
-	StorageType string `json:"storage_type,omitempty"`
+	StorageType string `json:"storageType,omitempty"`
 	Backup      bool   `json:"backup,omitempty"`
 }
 

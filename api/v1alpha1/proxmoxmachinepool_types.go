@@ -31,7 +31,7 @@ type ProxmoxMachinePoolSpec struct {
 
 	// The number of instances to deploy in this machine pool
 	Instances          int                     `json:"instances"`
-	MachineTemplateRef *corev1.ObjectReference `json:"machine_template_ref"`
+	MachineTemplateRef *corev1.ObjectReference `json:"machineTemplateRef"`
 }
 
 // ProxmoxMachinePoolStatus defines the observed state of ProxmoxMachinePool

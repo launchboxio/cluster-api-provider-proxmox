@@ -10,7 +10,7 @@ metadata:
   name: machine1
   namespace: default
 spec:
-  machine_template_ref:
+  machineTemplateRef:
     name: proxmoxmachinetemplate-sample
     namespace: default
-  target_node: athena
+  targetNode: athena

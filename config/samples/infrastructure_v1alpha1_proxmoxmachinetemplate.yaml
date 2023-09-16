@@ -12,8 +12,8 @@ spec:
   template: "VM 9001"
   resources:
     memory: 4096
-    cpu_cores: 4
-    cpu_sockets: 1
+    cpuCores: 4
+    cpuSockets: 1
   disks:
     - type: scsi
       size: "32G"
