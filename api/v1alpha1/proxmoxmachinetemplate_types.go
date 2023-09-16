@@ -36,6 +36,8 @@ type ProxmoxMachineTemplateSpec struct {
 	Resources ProxmoxMachineResources `json:"resources"`
 	Networks  []ProxmoxNetwork        `json:"networks"`
 	Disks     []ProxmoxDisk           `json:"disks"`
+
+	NetworkUserData string `json:"networkUserData,omitempty"`
 }
 
 type ProxmoxMachineResources struct {

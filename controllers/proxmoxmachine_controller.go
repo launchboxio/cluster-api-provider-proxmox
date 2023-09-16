@@ -17,18 +17,23 @@ limitations under the License.
 package controllers
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"fmt"
+	"github.com/c2fo/vfs/v6/vfssimple"
 	"github.com/luthermonson/go-proxmox"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"net/http"
+	"path/filepath"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
 	"strings"
 	"time"
+
+	"text/template"
 
 	errors2 "errors"
 
@@ -233,6 +238,7 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	// If VM is still showing as initializing, we want to perform further configuration
 	// - Configure network, disks, etc
+	// - Setup cicustom
 	// - Migrate to a target node
 	// - Start the Virtual Machine
 	if meta.IsStatusConditionTrue(proxmoxMachine.Status.Conditions, VirtualMachineInitializing) {
@@ -306,12 +312,15 @@ func (r *ProxmoxMachineReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func vmInitializationOptions(machine *infrastructurev1alpha1.ProxmoxMachine, template *infrastructurev1alpha1.ProxmoxMachineTemplate) []proxmox.VirtualMachineOption {
+func vmInitializationOptions(cluster *infrastructurev1alpha1.ProxmoxCluster, template *infrastructurev1alpha1.ProxmoxMachineTemplate) []proxmox.VirtualMachineOption {
 	options := []proxmox.VirtualMachineOption{
 		{Name: "memory", Value: template.Spec.Resources.Memory},
 		{Name: "sockets", Value: template.Spec.Resources.CpuSockets},
 		{Name: "cores", Value: template.Spec.Resources.CpuCores},
-		//{Name: "node", Value: machine.Spec.TargetNode},
+		{Name: "cicustom", Value: strings.Join([]string{
+			fmt.Sprintf("user=%s/%s", cluster.Spec.SnippetStorageUri, ""),
+			fmt.Sprintf("network=%s/%s", cluster.Spec.SnippetStorageUri, ""),
+		}, ",")},
 	}
 
 	for idx, network := range template.Spec.Networks {
@@ -420,4 +429,39 @@ func remove(vm *proxmox.VirtualMachine) error {
 		return err
 	}
 	return nil
+}
+
+func writeUserDataFile(cluster *infrastructurev1alpha1.ProxmoxCluster, path string, contents []byte) error {
+	handle, err := vfssimple.NewFile(filepath.Join(cluster.Spec.SnippetStorageUri, path))
+	if err != nil {
+		return err
+	}
+
+	_, err = handle.Write(contents)
+	return err
+}
+
+func generateUserNetworkData(networks []infrastructurev1alpha1.ProxmoxNetwork) ([]byte, error) {
+	tmpl, err := template.New("network").Parse(`
+#cloud-config
+version: 1 
+config: 
+  {{range $item, $key := .Networks}}
+  - type: physical
+    subnets: 
+      - type: dhcp
+  {{end}}
+`)
+
+	if err != nil {
+		return []byte{}, err
+	}
+
+	var buf bytes.Buffer
+	err = tmpl.Execute(&buf, struct {
+		Networks []infrastructurev1alpha1.ProxmoxNetwork
+	}{
+		Networks: networks,
+	})
+	return buf.Bytes(), err
 }
