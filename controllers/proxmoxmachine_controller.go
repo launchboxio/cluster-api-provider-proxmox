@@ -25,7 +25,6 @@ import (
 	"github.com/luthermonson/go-proxmox"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"net/http"
 	"path/filepath"
 	"sigs.k8s.io/cluster-api/util"
@@ -62,6 +61,11 @@ const (
 //+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=proxmoxmachines,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=proxmoxmachines/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=proxmoxmachines/finalizers,verbs=update
+// +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=*,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters;machines,verbs=get;list;watch
+// +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=machines;machines/status,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=events,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 
 const machineFinalizer = "infrastructure.cluster.x-k8s.io/finalizer"
 
@@ -137,15 +141,6 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, fmt.Errorf("error getting proxmoxcluster: %w", getErr)
 	}
 
-	machineTemplate := &infrastructurev1alpha1.ProxmoxMachineTemplate{}
-	if err := r.Get(ctx, types.NamespacedName{
-		Name:      proxmoxMachine.Spec.MachineTemplateRef.Name,
-		Namespace: proxmoxMachine.Spec.MachineTemplateRef.Namespace,
-	}, machineTemplate); err != nil {
-		contextLogger.Error(err, "Failed getting machine template")
-		return ctrl.Result{}, err
-	}
-
 	if proxmoxMachine.GetDeletionTimestamp() != nil {
 		if controllerutil.ContainsFinalizer(proxmoxMachine, machineFinalizer) {
 			// TODO: Perform out of band cleanup
@@ -166,7 +161,7 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	// Fetch our VM template
-	clusterTemplate, err := getVmTemplate(proxmoxClient, machineTemplate.Spec.Template)
+	clusterTemplate, err := getVmTemplate(proxmoxClient, proxmoxMachine.Spec.Template)
 	if err != nil || clusterTemplate == nil {
 		contextLogger.Error(err, "Failed to get VM template")
 		return ctrl.Result{}, err
@@ -242,7 +237,7 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// - Migrate to a target node
 	// - Start the Virtual Machine
 	if meta.IsStatusConditionTrue(proxmoxMachine.Status.Conditions, VirtualMachineInitializing) {
-		task, err := vm.Config(vmInitializationOptions(proxmoxMachine, machineTemplate)...)
+		task, err := vm.Config(vmInitializationOptions(proxmoxCluster, proxmoxMachine)...)
 		if err != nil {
 			contextLogger.Error(err, "Failed to reconfigure VM")
 			return ctrl.Result{}, err
@@ -253,7 +248,7 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, err
 		}
 
-		if vm.Node != proxmoxMachine.Spec.TargetNode {
+		if proxmoxMachine.Spec.TargetNode != "" && vm.Node != proxmoxMachine.Spec.TargetNode {
 			contextLogger.Info(fmt.Sprintf("Moving VM to node %s", proxmoxMachine.Spec.TargetNode))
 			task, err := vm.Migrate(proxmoxMachine.Spec.TargetNode, "")
 			if err != nil {
@@ -283,7 +278,7 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	// Lastly, check runtime settings. Things like CPU, memory, etc
 	// can be changed on an instance that has been initialized already
-	options := pendingChanges(proxmoxMachine, machineTemplate, vm)
+	options := pendingChanges(proxmoxMachine, vm)
 	if len(options) > 0 {
 		fmt.Println(options)
 		contextLogger.Info("VM out of sync, updating configuration")
@@ -312,18 +307,18 @@ func (r *ProxmoxMachineReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func vmInitializationOptions(cluster *infrastructurev1alpha1.ProxmoxCluster, template *infrastructurev1alpha1.ProxmoxMachineTemplate) []proxmox.VirtualMachineOption {
+func vmInitializationOptions(cluster *infrastructurev1alpha1.ProxmoxCluster, machine *infrastructurev1alpha1.ProxmoxMachine) []proxmox.VirtualMachineOption {
 	options := []proxmox.VirtualMachineOption{
-		{Name: "memory", Value: template.Spec.Resources.Memory},
-		{Name: "sockets", Value: template.Spec.Resources.CpuSockets},
-		{Name: "cores", Value: template.Spec.Resources.CpuCores},
+		{Name: "memory", Value: machine.Spec.Resources.Memory},
+		{Name: "sockets", Value: machine.Spec.Resources.CpuSockets},
+		{Name: "cores", Value: machine.Spec.Resources.CpuCores},
 		{Name: "cicustom", Value: strings.Join([]string{
 			fmt.Sprintf("user=%s/%s", cluster.Spec.SnippetStorageUri, ""),
 			fmt.Sprintf("network=%s/%s", cluster.Spec.SnippetStorageUri, ""),
 		}, ",")},
 	}
 
-	for idx, network := range template.Spec.Networks {
+	for idx, network := range machine.Spec.Networks {
 		options = append(options, proxmox.VirtualMachineOption{
 			Name: fmt.Sprintf("net%d", idx),
 			Value: strings.Join([]string{
@@ -336,23 +331,23 @@ func vmInitializationOptions(cluster *infrastructurev1alpha1.ProxmoxCluster, tem
 	return options
 }
 
-func pendingChanges(machine *infrastructurev1alpha1.ProxmoxMachine, template *infrastructurev1alpha1.ProxmoxMachineTemplate, vm *proxmox.VirtualMachine) []proxmox.VirtualMachineOption {
+func pendingChanges(machine *infrastructurev1alpha1.ProxmoxMachine, vm *proxmox.VirtualMachine) []proxmox.VirtualMachineOption {
 	opts := []proxmox.VirtualMachineOption{}
 
-	if vm.CPUs != template.Spec.Resources.CpuCores {
+	if vm.CPUs != machine.Spec.Resources.CpuCores {
 		opts = append(opts, proxmox.VirtualMachineOption{
 			Name:  "cores",
-			Value: template.Spec.Resources.CpuCores,
+			Value: machine.Spec.Resources.CpuCores,
 		})
 	}
 
 	// TODO: Due to differences in storage unit, memory
 	// always shows as a change. Fine for now, but should
 	// be addressed
-	if int(vm.MaxMem) != template.Spec.Resources.Memory {
+	if int(vm.MaxMem) != machine.Spec.Resources.Memory {
 		opts = append(opts, proxmox.VirtualMachineOption{
 			Name:  "memory",
-			Value: template.Spec.Resources.Memory,
+			Value: machine.Spec.Resources.Memory,
 		})
 	}
 
@@ -465,3 +460,51 @@ config:
 	})
 	return buf.Bytes(), err
 }
+
+var defaultKubernetesScript = template.Must(template.New("install").Parse(`
+# Setup sysctl and modules
+cat <<EOF | tee /etc/modules-load.d/containerd.conf
+overlay
+br_netfilter
+EOF
+
+modprobe overlay
+modprobe br_netfilter
+
+cat <<EOF | sudo tee /etc/sysctl.d/99-kubernetes-cri.conf
+net.bridge.bridge-nf-call-iptables = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+net.ipv4.ip_forward = 1
+EOF
+sysctl --system
+
+# Install containerd
+apt update -y
+apt install -y containerd
+mkdir -p /etc/containerd
+containerd config default | tee /etc/containerd/config.toml
+systemctl restart containerd
+systemctl status containerd
+
+# Install kubectl
+curl -LO "https://dl.k8s.io/release/v{{ .KubernetesVersion }}/bin/linux/amd64/kubectl"
+curl -LO "https://dl.k8s.io/v{{ .KubernetesVersion }}/bin/linux/amd64/kubectl.sha256"
+echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check
+
+# Install kubeadm
+`))
+
+var packageManagerInstallScript = template.Must(template.New("packages").Parse(`
+#!/usr/bin/env bash 
+
+sudo apt-get update -y
+sudo apt-get install -y apt-transport-https ca-certificates curl
+
+sudo mkdir -m 755 /etc/apt/keyrings
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.28/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.28/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+
+sudo apt-get update
+sudo apt-get install -y kubelet kubeadm kubectl
+sudo apt-mark hold kubelet kubeadm kubectl
+`))

@@ -76,6 +76,9 @@ func (r *ProxmoxClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	proxmoxCluster.Status.Ready = true
+	if err = r.Status().Update(context.TODO(), proxmoxCluster); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	// TODO: Check that the API server itself is available
 

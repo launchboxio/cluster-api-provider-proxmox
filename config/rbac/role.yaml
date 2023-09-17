@@ -6,6 +6,55 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - cluster.x-k8s.io
+  resources:
+  - clusters
+  - machines
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - cluster.x-k8s.io
+  resources:
+  - machines
+  - machines/status
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - infrastructure.cluster.x-k8s.io
+  resources:
+  - '*'
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - infrastructure.cluster.x-k8s.io
   resources:
   - proxmoxclusters
@@ -34,6 +83,32 @@ rules:
 - apiGroups:
   - infrastructure.cluster.x-k8s.io
   resources:
+  - proxmoxmachinepools
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - infrastructure.cluster.x-k8s.io
+  resources:
+  - proxmoxmachinepools/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - infrastructure.cluster.x-k8s.io
+  resources:
+  - proxmoxmachinepools/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - infrastructure.cluster.x-k8s.io
+  resources:
   - proxmoxmachines
   verbs:
   - create
@@ -53,32 +128,6 @@ rules:
   - infrastructure.cluster.x-k8s.io
   resources:
   - proxmoxmachines/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - infrastructure.cluster.x-k8s.io
-  resources:
-  - proxmoxmachinetemplates
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - infrastructure.cluster.x-k8s.io
-  resources:
-  - proxmoxmachinetemplates/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - infrastructure.cluster.x-k8s.io
-  resources:
-  - proxmoxmachinetemplates/status
   verbs:
   - get
   - patch

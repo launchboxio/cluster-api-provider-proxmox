@@ -17,7 +17,6 @@ limitations under the License.
 package v1alpha1
 
 import (
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -32,7 +31,38 @@ type ProxmoxMachineSpec struct {
 	// Foo is an example field of ProxmoxMachine. Edit proxmoxmachine_types.go to remove/update
 	TargetNode string `json:"targetNode,omitempty"`
 
-	MachineTemplateRef *corev1.ObjectReference `json:"machineTemplateRef"`
+	// Foo is an example field of ProxmoxMachineTemplate. Edit proxmoxmachinetemplate_types.go to remove/update
+	OnBoot bool   `json:"onboot,omitempty"`
+	Scsihw string `json:"scsihw,omitempty"`
+
+	Template  string                  `json:"template"`
+	Resources ProxmoxMachineResources `json:"resources"`
+	Networks  []ProxmoxNetwork        `json:"networks"`
+	Disks     []ProxmoxDisk           `json:"disks"`
+
+	NetworkUserData string `json:"networkUserData,omitempty"`
+}
+
+type ProxmoxMachineResources struct {
+	Memory     int `json:"memory,omitempty"`
+	CpuCores   int `json:"cpuCores,omitempty"`
+	CpuSockets int `json:"cpuSockets,omitempty"`
+}
+
+type ProxmoxNetwork struct {
+	Model    string `json:"model"`
+	Bridge   string `json:"bridge"`
+	Firewall bool   `json:"firewall,omitempty"`
+	Backup   bool   `json:"backup,omitempty"`
+	Tag      string `json:"tag,omitempty"`
+}
+
+type ProxmoxDisk struct {
+	Type        string `json:"type,omitempty"`
+	Storage     string `json:"storage,omitempty"`
+	Size        string `json:"size,omitempty"`
+	StorageType string `json:"storageType,omitempty"`
+	Backup      bool   `json:"backup,omitempty"`
 }
 
 // ProxmoxMachineStatus defines the observed state of ProxmoxMachine
