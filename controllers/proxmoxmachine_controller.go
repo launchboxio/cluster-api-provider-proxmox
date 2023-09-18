@@ -569,15 +569,14 @@ config:
 
 var packageManagerInstallScript = template.Must(template.New("packages").Parse(`
 #!/usr/bin/env bash
-set -euox pipefail
+set -x
 
-K8S_VERSION="{{ .KubernetesVersion }}"
-export repo=${K8S_VERSION%.*}
+export repo=${1%.*}
 apt-get update -y
 apt-get install -y apt-transport-https ca-certificates curl gnupg qemu-guest-agent wget
 
-systemctl enable qemu-guest-agent
-systemctl start qemu-guest-agent
+# systemctl enable qemu-guest-agent
+# systemctl start qemu-guest-agent
 
 swapoff -a && sed -ri '/\sswap\s/s/^#?/#/' /etc/fstab
 modprobe overlay && modprobe br_netfilter
@@ -612,7 +611,7 @@ curl -fsSL https://pkgs.k8s.io/core:/stable:/v${repo}/deb/Release.key | gpg --de
 echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v${repo}/deb/ /" | tee /etc/apt/sources.list.d/kubernetes.list
 
 apt-get update -y
-apt-get install -y kubelet=$K8S_VERSION-* kubeadm=$K8S_VERSION-* kubectl=$K8S_VERSION-*
+apt-get install -y kubelet=$1-* kubeadm=$1-* kubectl=$1-*
 apt-mark hold kubelet kubeadm kubectl
 
 swapoff -a && sed -ri '/\sswap\s/s/^#?/#/' /etc/fstab
@@ -655,14 +654,10 @@ func generateSnippets(
 	}
 
 	var buf bytes.Buffer
-	err = packageManagerInstallScript.Execute(&buf, struct {
-		KubernetesVersion string
-	}{
-		KubernetesVersion: strings.TrimPrefix(version, "v"),
-	})
+	err = packageManagerInstallScript.Execute(&buf, struct{}{})
 	// Append the runCmd for our new scripte
 	bootstrapSecret.RunCmd = append([]string{
-		"sudo /init.sh",
+		fmt.Sprintf("sudo /init.sh %s", strings.TrimPrefix(version, "v")),
 	}, bootstrapSecret.RunCmd...)
 	bootstrapSecret.Write_Files = append(
 		bootstrapSecret.Write_Files,
