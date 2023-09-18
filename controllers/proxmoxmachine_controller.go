@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"fmt"
 	"github.com/luthermonson/go-proxmox"
 	"github.com/pkg/sftp"
@@ -109,6 +110,32 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
+	if proxmoxMachine.GetDeletionTimestamp() != nil {
+		if controllerutil.ContainsFinalizer(proxmoxMachine, machineFinalizer) {
+			// TODO: Perform out of band cleanup
+			contextLogger.Info("Cleaning up machine for finalizer")
+			vm, err := loadVm(proxmoxClient, proxmoxMachine.Status.Vmid)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			if vm == nil {
+				// Couldnt find the VM, I suppose we assume its deleted
+				controllerutil.RemoveFinalizer(proxmoxMachine, machineFinalizer)
+				err = r.Update(context.TODO(), proxmoxMachine)
+				return ctrl.Result{}, err
+			}
+
+			err = remove(vm)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+
+			controllerutil.RemoveFinalizer(proxmoxMachine, machineFinalizer)
+			err = r.Update(context.TODO(), proxmoxMachine)
+			return ctrl.Result{}, err
+		}
+	}
+
 	machine, err := util.GetOwnerMachine(ctx, r.Client, proxmoxMachine.ObjectMeta)
 	if err != nil {
 		contextLogger.Error(err, "getting owning machine")
@@ -144,32 +171,6 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 		contextLogger.Error(getErr, "error getting proxmoxcluster", "id", proxmoxClusterName)
 		return ctrl.Result{}, fmt.Errorf("error getting proxmoxcluster: %w", getErr)
-	}
-
-	if proxmoxMachine.GetDeletionTimestamp() != nil {
-		if controllerutil.ContainsFinalizer(proxmoxMachine, machineFinalizer) {
-			// TODO: Perform out of band cleanup
-			contextLogger.Info("Cleaning up machine for finalizer")
-			vm, err := loadVm(proxmoxClient, proxmoxMachine.Status.Vmid)
-			if err != nil {
-				return ctrl.Result{}, err
-			}
-			if vm == nil {
-				// Couldnt find the VM, I suppose we assume its deleted
-				controllerutil.RemoveFinalizer(proxmoxMachine, machineFinalizer)
-				err = r.Update(context.TODO(), proxmoxMachine)
-				return ctrl.Result{}, err
-			}
-
-			err = remove(vm)
-			if err != nil {
-				return ctrl.Result{}, err
-			}
-
-			controllerutil.RemoveFinalizer(proxmoxMachine, machineFinalizer)
-			err = r.Update(context.TODO(), proxmoxMachine)
-			return ctrl.Result{}, err
-		}
 	}
 
 	// Fetch our VM template
@@ -326,6 +327,12 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				contextLogger.Error(err, "Timed out waiting for VM to migrate")
 				return ctrl.Result{}, err
 			}
+
+			node, err = proxmoxClient.Node(proxmoxMachine.Spec.TargetNode)
+			if err != nil {
+				contextLogger.Error(err, "Failed getting new node")
+				return ctrl.Result{}, err
+			}
 		}
 
 		meta.SetStatusCondition(&proxmoxMachine.Status.Conditions, metav1.Condition{
@@ -341,16 +348,16 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 
 		// TODO: Need to get new node identifier
-		//task, err = vm.Start()
-		//if err != nil {
-		//	contextLogger.Error(err, "Failed starting VM")
-		//	return ctrl.Result{}, err
-		//}
-		//
-		//if err = task.Wait(time.Second*5, time.Minute*10); err != nil {
-		//	contextLogger.Error(err, "Timed out waiting for VM to start")
-		//	return ctrl.Result{}, err
-		//}
+		task, err = vm.Start()
+		if err != nil {
+			contextLogger.Error(err, "Failed starting VM")
+			return ctrl.Result{}, err
+		}
+
+		if err = task.Wait(time.Second*5, time.Minute*10); err != nil {
+			contextLogger.Error(err, "Timed out waiting for VM to start")
+			return ctrl.Result{}, err
+		}
 
 		return ctrl.Result{}, nil
 	}
@@ -526,10 +533,10 @@ func writeUserDataFile(cluster *infrastructurev1alpha1.ProxmoxCluster, path stri
 func generateUserNetworkData(networks []infrastructurev1alpha1.ProxmoxNetwork) ([]byte, error) {
 	tmpl, err := template.New("network").Parse(`
 #cloud-config
-version: 1 
-config: 
+version: 1
+config:
 - type: physical
-  name: ens18 
+  name: ens18
   subnets:
     - type: dhcp
 - type: physical
@@ -561,19 +568,54 @@ config:
 }
 
 var packageManagerInstallScript = template.Must(template.New("packages").Parse(`
-#!/usr/bin/env bash 
-K8S_VERSION="{{ .Kubernetes.Version }}"
-repo=${K8S_VERSION%.*}
-sudo apt-get update -y
-sudo apt-get install -y apt-transport-https ca-certificates curl
+#!/usr/bin/env bash
+set -euox pipefail
 
-sudo mkdir -p -m 755 /etc/apt/keyrings
-curl -fsSL https://pkgs.k8s.io/core:/stable:/${repo}/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/${repo}/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+K8S_VERSION="{{ .KubernetesVersion }}"
+export repo=${K8S_VERSION%.*}
+apt-get update -y
+apt-get install -y apt-transport-https ca-certificates curl gnupg qemu-guest-agent wget
 
-sudo apt-get update
-sudo apt-get install -y kubelet={{.KubernetesVersion}} kubeadm={{.KubernetesVersion}} kubectl={{.KubernetesVersion}}
-sudo apt-mark hold kubelet kubeadm kubectl
+systemctl enable qemu-guest-agent
+systemctl start qemu-guest-agent
+
+swapoff -a && sed -ri '/\sswap\s/s/^#?/#/' /etc/fstab
+modprobe overlay && modprobe br_netfilter
+
+tee /etc/sysctl.d/kubernetes.conf <<EOF
+net.bridge.bridge-nf-call-ip6tables = 1
+net.bridge.bridge-nf-call-iptables = 1
+net.ipv4.ip_forward = 1
+EOF
+
+sysctl --system
+
+tee /etc/modules-load.d/k8s.conf <<EOF
+overlay
+br_netfilter
+EOF
+
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -
+add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+
+apt update -y
+apt install containerd.io -y
+mkdir /etc/containerd
+containerd config default>/etc/containerd/config.toml
+
+modprobe overlay && modprobe br_netfilter
+systemctl restart containerd
+systemctl enable containerd
+
+mkdir -p -m 755 /etc/apt/keyrings
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v${repo}/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v${repo}/deb/ /" | tee /etc/apt/sources.list.d/kubernetes.list
+
+apt-get update -y
+apt-get install -y kubelet=$K8S_VERSION-* kubeadm=$K8S_VERSION-* kubectl=$K8S_VERSION-*
+apt-mark hold kubelet kubeadm kubectl
+
+swapoff -a && sed -ri '/\sswap\s/s/^#?/#/' /etc/fstab
 `))
 
 type BootstrapSecretFile struct {
@@ -581,6 +623,7 @@ type BootstrapSecretFile struct {
 	Owner       string `yaml:"owner"`
 	Permissions string `yaml:"permissions"`
 	Content     string `yaml:"content"`
+	Encoding    string `yaml:"encoding,omitempty"`
 }
 
 type BootstrapUser struct {
@@ -590,18 +633,6 @@ type BootstrapUser struct {
 	Groups              []string `yaml:"groups"`
 	Ssh_Authorized_Keys []string `yaml:"ssh_authorized_keys"`
 }
-
-// users:
-//  - name: ubuntu
-//    lock_passwd: false
-//    sudo: "ALL=(ALL) NOPASSWD:ALL"
-//    groups:
-//      - sudo
-//    ssh_authorized_keys:
-//     - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFCLTBbrAHY00VcwXm1KiMcfCOmql06Hjtl0xyk/YrVg robwittman@github/82081183 # ssh-import-id gh:robwittman
-//     - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDMok8dumPcuErp7ZiKBaCEyY2unIEL98r1E2zRcg//aXZ3+7MB45sloqjHYrDZqn6Q4Ov//7+PxQnvm4AuWY8eWexd32gCGXBGq/+4EQl+tjFDsLmQej5ezEZEWfssgOGgX0TMWR+r7C65AM1EohJpWD2LuJgwqz2SCd9TQdfzRyLHnna3Wo/SKLbA9I84EdgNq9/gnu0+d26Q9kBRASPcKsG46bD6X9ehS6ptd/DSTQmyYucMvmevVA3Z17CJ22UPllfRvdV8IsWM4a3ZvdKgdrIp5a6drhWMIDkZ8AbVWkztY+r2Pn7rZ7efN0mJR/601HMOTRF2ywfcHxb6bE+teKnuhNYT++Po0XD/rR2z5SEi74/uRCv+SMNf3GwMelIYwGxuH34Eh9WoCA6516j3/vBrfqJk0XWlesjFImDYHXk7WblfgkG1obbHLJ2QY7O/VzCSLl29D5OTwZHoazarmBz+x+lsxN2Qg3GEvPkFNJto9R/kWvPvS2OgSnZYabE= robwittman@github/59786197 # ssh-import-id gh:robwittman
-//     - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEB2XYDUPU/MrNb8eTKnoz1vANw0u+G1089oC+WdRTb9 robwittman@github/81931695 # ssh-import-id gh:robwittman
-//     - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICJqx657ktJzgzKawXJbCkTYOq/2tpvupGxDLo1QosUP robwittman@github/60396273 # ssh-import-id gh:robwittman
 
 type BootstrapSecret struct {
 	RunCmd []string        `yaml:"runcmd"`
@@ -627,7 +658,7 @@ func generateSnippets(
 	err = packageManagerInstallScript.Execute(&buf, struct {
 		KubernetesVersion string
 	}{
-		KubernetesVersion: version,
+		KubernetesVersion: strings.TrimPrefix(version, "v"),
 	})
 	// Append the runCmd for our new scripte
 	bootstrapSecret.RunCmd = append([]string{
@@ -639,7 +670,8 @@ func generateSnippets(
 			Path:        "/init.sh",
 			Permissions: "0755",
 			Owner:       "root:root",
-			Content:     string(buf.Bytes()),
+			Content:     base64.StdEncoding.EncodeToString(buf.Bytes()),
+			Encoding:    "b64",
 		},
 	)
 
@@ -681,7 +713,7 @@ func generateSnippets(
 		storagePath,
 		userFileName,
 		[]byte(fmt.Sprintf(`
-#cloud-config 
+#cloud-config
 %s
 `, userContents)),
 	)

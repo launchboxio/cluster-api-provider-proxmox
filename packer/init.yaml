@@ -1,0 +1,37 @@
+#cloud-config
+autoinstall:
+  version: 1
+  locale: en_US
+  keyboard:
+    layout: us
+  updates: security
+  apt:
+    disable_suites: [security]
+  ssh:
+    install-server: true
+    allow-pw: true
+    disable_root: true
+    ssh_quiet_keygen: true
+    allow_public_ssh_keys: true
+  packages:
+    - qemu-guest-agent
+    - sudo
+  storage:
+    layout:
+      name: direct
+    swap:
+      size: 0
+  user-data:
+    package_upgrade: false
+    timezone: Pacific/Auckland
+    users:
+      - name: rxhackk
+        groups: [adm, sudo]
+        lock-passwd: false
+        sudo: ALL=(ALL) NOPASSWD:ALL
+        shell: /bin/bash
+        ssh_authorized_keys:
+        - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEB2XYDUPU/MrNb8eTKnoz1vANw0u+G1089oC+WdRTb9 robwittman@github/81931695 # ssh-import-id gh:robwittman
+        - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDMok8dumPcuErp7ZiKBaCEyY2unIEL98r1E2zRcg//aXZ3+7MB45sloqjHYrDZqn6Q4Ov//7+PxQnvm4AuWY8eWexd32gCGXBGq/+4EQl+tjFDsLmQej5ezEZEWfssgOGgX0TMWR+r7n
+        - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFCLTBbrAHY00VcwXm1KiMcfCOmql06Hjtl0xyk/YrVg robwittman@github/82081183 # ssh-import-id gh:robwittman
+        - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICJqx657ktJzgzKawXJbCkTYOq/2tpvupGxDLo1QosUP robwittman@github/60396273 # ssh-import-id gh:robwittman

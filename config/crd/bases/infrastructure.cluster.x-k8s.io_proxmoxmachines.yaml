@@ -85,6 +85,10 @@ spec:
                 type: object
               scsihw:
                 type: string
+              sshKeys:
+                items:
+                  type: string
+                type: array
               targetNode:
                 description: Foo is an example field of ProxmoxMachine. Edit proxmoxmachine_types.go
                   to remove/update
