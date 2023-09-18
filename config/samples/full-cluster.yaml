@@ -69,6 +69,60 @@ spec:
       controllerManager:
         extraArgs:
           enable-hostpath-provisioner: "true"
+    files:
+      - content: |
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            creationTimestamp: null
+            name: kube-vip
+            namespace: kube-system
+          spec:
+            containers:
+            - args:
+              - manager
+              env:
+              - name: cp_enable
+                value: "true"
+              - name: vip_arp
+                value: "true"
+              - name: vip_leaderelection
+                value: "true"
+              - name: vip_address
+                value: 172.30.101.2
+              - name: vip_interface
+                value: ens18
+              - name: vip_leaseduration
+                value: "15"
+              - name: vip_renewdeadline
+                value: "10"
+              - name: vip_retryperiod
+                value: "2"
+              image: ghcr.io/kube-vip/kube-vip:v0.5.0
+              imagePullPolicy: IfNotPresent
+              name: kube-vip
+              resources: {}
+              securityContext:
+                capabilities:
+                  add:
+                  - NET_ADMIN
+                  - NET_RAW
+              volumeMounts:
+              - mountPath: /etc/kubernetes/admin.conf
+                name: kubeconfig
+            hostNetwork: true
+            hostAliases:
+              - hostnames:
+                  - kubernetes
+                ip: 127.0.0.1
+            volumes:
+            - hostPath:
+                path: /etc/kubernetes/admin.conf
+                type: FileOrCreate
+              name: kubeconfig
+          status: {}
+        owner: root:root
+        path: /etc/kubernetes/manifests/kube-vip.yaml
     initConfiguration:
       nodeRegistration:
         criSocket: /var/run/containerd/containerd.sock
@@ -145,6 +199,12 @@ spec:
           bridge: vmbr2
         - model: virtio
           bridge: vmbr3
+      sshKeys:
+        - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEB2XYDUPU/MrNb8eTKnoz1vANw0u+G1089oC+WdRTb9 robwittman@github/81931695 # ssh-import-id gh:robwittman"
+        - "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDMok8dumPcuErp7ZiKBaCEyY2unIEL98r1E2zRcg//aXZ3+7MB45sloqjHYrDZqn6Q4Ov//7+PxQnvm4AuWY8eWexd32gCGXBGq/+4EQl+tjFDsLmQej5ezEZEWfssgOGgX0TMWR+r7C65AM1EohJpWD2LuJgwqz2SCd9TQdfzRyLHnna3Wo/SKLbA9I84EdgNq9/gnu0+d26Q9kBRASPcKsG46bD6X9ehS6ptd/DSTQmyYucMvmevVA3Z17CJ22UPllfRvdV8IsWM4a3ZvdKgdrIp5a6drhWMIDkZ8AbVWkztY+r2Pn7rZ7efN0mJR/601HMOTRF2ywfcHxb6bE+teKnuhNYT++Po0XD/rR2z5SEi74/uRCv+SMNf3GwMelIYwGxuH34Eh9WoCA6516j3/vBrfqJk0XWlesjFImDYHXk7WblfgkG1obbHLJ2QY7O/VzCSLl29D5OTwZHoazarmBz+x+lsxN2Qg3GEvPkFNJto9R/kWvPvS2OgSnZYabE= robwittman@github/59786197 # ssh-import-id gh:robwittman"
+        - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFCLTBbrAHY00VcwXm1KiMcfCOmql06Hjtl0xyk/YrVg robwittman@github/82081183 # ssh-import-id gh:robwittman"
+        - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICJqx657ktJzgzKawXJbCkTYOq/2tpvupGxDLo1QosUP robwittman@github/60396273 # ssh-import-id gh:robwittman"
+
 ---
 apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
 kind: ProxmoxMachineTemplate
@@ -172,3 +232,8 @@ spec:
           bridge: vmbr2
         - model: virtio
           bridge: vmbr3
+      sshKeys:
+        - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEB2XYDUPU/MrNb8eTKnoz1vANw0u+G1089oC+WdRTb9 robwittman@github/81931695 # ssh-import-id gh:robwittman"
+        - "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDMok8dumPcuErp7ZiKBaCEyY2unIEL98r1E2zRcg//aXZ3+7MB45sloqjHYrDZqn6Q4Ov//7+PxQnvm4AuWY8eWexd32gCGXBGq/+4EQl+tjFDsLmQej5ezEZEWfssgOGgX0TMWR+r7C65AM1EohJpWD2LuJgwqz2SCd9TQdfzRyLHnna3Wo/SKLbA9I84EdgNq9/gnu0+d26Q9kBRASPcKsG46bD6X9ehS6ptd/DSTQmyYucMvmevVA3Z17CJ22UPllfRvdV8IsWM4a3ZvdKgdrIp5a6drhWMIDkZ8AbVWkztY+r2Pn7rZ7efN0mJR/601HMOTRF2ywfcHxb6bE+teKnuhNYT++Po0XD/rR2z5SEi74/uRCv+SMNf3GwMelIYwGxuH34Eh9WoCA6516j3/vBrfqJk0XWlesjFImDYHXk7WblfgkG1obbHLJ2QY7O/VzCSLl29D5OTwZHoazarmBz+x+lsxN2Qg3GEvPkFNJto9R/kWvPvS2OgSnZYabE= robwittman@github/59786197 # ssh-import-id gh:robwittman"
+        - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFCLTBbrAHY00VcwXm1KiMcfCOmql06Hjtl0xyk/YrVg robwittman@github/82081183 # ssh-import-id gh:robwittman"
+        - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICJqx657ktJzgzKawXJbCkTYOq/2tpvupGxDLo1QosUP robwittman@github/60396273 # ssh-import-id gh:robwittman"

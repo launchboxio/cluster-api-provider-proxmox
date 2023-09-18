@@ -328,9 +328,9 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				return ctrl.Result{}, err
 			}
 
-			node, err = proxmoxClient.Node(proxmoxMachine.Spec.TargetNode)
+			// Reload the VM to get the appropriate node
+			vm, err = loadVm(proxmoxClient, proxmoxMachine.Status.Vmid)
 			if err != nil {
-				contextLogger.Error(err, "Failed getting new node")
 				return ctrl.Result{}, err
 			}
 		}
@@ -347,7 +347,6 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, err
 		}
 
-		// TODO: Need to get new node identifier
 		task, err = vm.Start()
 		if err != nil {
 			contextLogger.Error(err, "Failed starting VM")
@@ -655,6 +654,7 @@ func generateSnippets(
 
 	var buf bytes.Buffer
 	err = packageManagerInstallScript.Execute(&buf, struct{}{})
+	hostname := proxmoxMachine.Namespace + "-" + proxmoxMachine.Name
 	// Append the runCmd for our new scripte
 	bootstrapSecret.RunCmd = append([]string{
 		fmt.Sprintf("sudo /init.sh %s", strings.TrimPrefix(version, "v")),
@@ -667,6 +667,18 @@ func generateSnippets(
 			Owner:       "root:root",
 			Content:     base64.StdEncoding.EncodeToString(buf.Bytes()),
 			Encoding:    "b64",
+		},
+		BootstrapSecretFile{
+			Path:        "/var/lib/cloud/data/set-hostname",
+			Permissions: "0644",
+			Owner:       "root:root",
+			Content: base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf(`
+{
+  "hostname": "%s",
+  "fqdn": "%s"
+}
+`, hostname, hostname))),
+			Encoding: "b64",
 		},
 	)
 
