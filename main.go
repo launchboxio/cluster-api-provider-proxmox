@@ -20,6 +20,7 @@ import (
 	"flag"
 	"os"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -49,6 +50,7 @@ func init() {
 	//+kubebuilder:scaffold:scheme
 
 	utilruntime.Must(clusterv1.AddToScheme(scheme))
+	utilruntime.Must(bootstrapv1.AddToScheme(scheme))
 }
 
 func main() {

@@ -21,20 +21,24 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"github.com/c2fo/vfs/v6/vfssimple"
 	"github.com/luthermonson/go-proxmox"
+	"github.com/pkg/sftp"
+	"golang.org/x/crypto/ssh"
+	goyaml "gopkg.in/yaml.v3"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/yaml"
+
+	//"k8s.io/apimachinery/pkg/types"
 	"net/http"
-	"path/filepath"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
 	"strings"
 	"time"
 
 	"text/template"
-
-	errors2 "errors"
 
 	//"github.com/Telmate/proxmox-api-go/proxmox"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -46,6 +50,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	infrastructurev1alpha1 "github.com/launchboxio/cluster-api-provider-proxmox/api/v1alpha1"
+	//bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
 )
 
 // ProxmoxMachineReconciler reconciles a ProxmoxMachine object
@@ -61,11 +66,11 @@ const (
 //+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=proxmoxmachines,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=proxmoxmachines/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=proxmoxmachines/finalizers,verbs=update
-// +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=*,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters;machines,verbs=get;list;watch
-// +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=machines;machines/status,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=events,verbs=get;list;watch;create;update;patch
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+//+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=*,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters;machines,verbs=get;list;watch
+//+kubebuilder:rbac:groups=cluster.x-k8s.io,resources=machines;machines/status,verbs=get;list;watch
+//+kubebuilder:rbac:groups="",resources=events,verbs=get;list;watch;create;update;patch
+//+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 
 const machineFinalizer = "infrastructure.cluster.x-k8s.io/finalizer"
 
@@ -122,7 +127,7 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	if annotations.IsPaused(cluster, proxmoxMachine) {
-		contextLogger.Info("MicrovmMachine or linked Cluster is marked as paused. Won't reconcile")
+		contextLogger.Info("ProxmoCluster or linked Cluster is marked as paused. Won't reconcile")
 		return ctrl.Result{}, nil
 	}
 
@@ -149,6 +154,13 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			if err != nil {
 				return ctrl.Result{}, err
 			}
+			if vm == nil {
+				// Couldnt find the VM, I suppose we assume its deleted
+				controllerutil.RemoveFinalizer(proxmoxMachine, machineFinalizer)
+				err = r.Update(context.TODO(), proxmoxMachine)
+				return ctrl.Result{}, err
+			}
+
 			err = remove(vm)
 			if err != nil {
 				return ctrl.Result{}, err
@@ -182,8 +194,13 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// Clone the machine, set the VMID in the status, and then
 	// simply return. We want to keep creation / and CRD updates
 	// as idempotent as possible
-	if proxmoxMachine.Status.Vmid == 0 {
 
+	if proxmoxMachine.Status.Vmid == 0 {
+		// Try getting status again to prevent duplication of machines
+		if err := r.Get(ctx, req.NamespacedName, proxmoxMachine); err != nil {
+			contextLogger.Error(err, "Failed to get ProxmoxMachine")
+			return ctrl.Result{}, err
+		}
 		vmid, task, err := template.Clone(&proxmox.VirtualMachineCloneOptions{
 			Name: fmt.Sprintf("%s-%s", proxmoxMachine.Namespace, proxmoxMachine.Name),
 		})
@@ -231,12 +248,62 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
+	if vm == nil {
+		contextLogger.Info(fmt.Sprintf(
+			"Resource had VMID of %d, but it didnt exist in Proxmox. Purging and starting over",
+			proxmoxMachine.Status.Vmid,
+		))
+		return ctrl.Result{RequeueAfter: time.Minute * 5}, nil
+		// We have stored a proxmox VMID in the status of the CRD, yet the
+		// machine doesnt exist in proxmox. For now, let's just purge the
+		// status, ignore what exists in Proxmox, and create a fresh machine
+		// We don't want to do this. Any network connectivity issue with
+		// proxmox results in all of the machines being orphaned
+		//proxmoxMachine.Status.Vmid = 0
+		//proxmoxMachine.Status.Conditions = nil
+		//err = r.Status().Update(ctx, proxmoxMachine)
+		//return ctrl.Result{}, err
+	}
 	// If VM is still showing as initializing, we want to perform further configuration
 	// - Configure network, disks, etc
 	// - Setup cicustom
 	// - Migrate to a target node
 	// - Start the Virtual Machine
 	if meta.IsStatusConditionTrue(proxmoxMachine.Status.Conditions, VirtualMachineInitializing) {
+		if machine.Spec.Bootstrap.DataSecretName == nil {
+			contextLogger.Info("No bootstrap secret found...")
+			return ctrl.Result{}, nil
+		}
+		bootstrapSecret := &v1.Secret{}
+		if err := r.Get(ctx, types.NamespacedName{
+			Namespace: proxmoxMachine.Namespace,
+			Name:      *machine.Spec.Bootstrap.DataSecretName,
+		}, bootstrapSecret); err != nil {
+			contextLogger.Info("Failed finding bootstrap secret")
+			return ctrl.Result{}, err
+		}
+
+		credentialsSecret := &v1.Secret{}
+		if err := r.Get(ctx, types.NamespacedName{
+			Namespace: proxmoxMachine.Namespace,
+			Name:      proxmoxCluster.Spec.Snippets.CredentialsSecretName,
+		}, credentialsSecret); err != nil {
+			contextLogger.Info("Failed finding storage credentials")
+			return ctrl.Result{}, err
+		}
+
+		err = generateSnippets(
+			bootstrapSecret,
+			"v1.25.11", // TODO: Pull Kubernetes version from CRD
+			credentialsSecret,
+			"/mnt/default/snippets/snippets/",
+			proxmoxMachine,
+		)
+		if err != nil {
+			contextLogger.Info("Failed to generate snippet for machine")
+			return ctrl.Result{}, err
+		}
+
 		task, err := vm.Config(vmInitializationOptions(proxmoxCluster, proxmoxMachine)...)
 		if err != nil {
 			contextLogger.Error(err, "Failed to reconfigure VM")
@@ -273,6 +340,18 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, err
 		}
 
+		// TODO: Need to get new node identifier
+		//task, err = vm.Start()
+		//if err != nil {
+		//	contextLogger.Error(err, "Failed starting VM")
+		//	return ctrl.Result{}, err
+		//}
+		//
+		//if err = task.Wait(time.Second*5, time.Minute*10); err != nil {
+		//	contextLogger.Error(err, "Timed out waiting for VM to start")
+		//	return ctrl.Result{}, err
+		//}
+
 		return ctrl.Result{}, nil
 	}
 
@@ -280,7 +359,6 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// can be changed on an instance that has been initialized already
 	options := pendingChanges(proxmoxMachine, vm)
 	if len(options) > 0 {
-		fmt.Println(options)
 		contextLogger.Info("VM out of sync, updating configuration")
 		task, err := vm.Config(options...)
 		if err != nil {
@@ -313,8 +391,16 @@ func vmInitializationOptions(cluster *infrastructurev1alpha1.ProxmoxCluster, mac
 		{Name: "sockets", Value: machine.Spec.Resources.CpuSockets},
 		{Name: "cores", Value: machine.Spec.Resources.CpuCores},
 		{Name: "cicustom", Value: strings.Join([]string{
-			fmt.Sprintf("user=%s/%s", cluster.Spec.SnippetStorageUri, ""),
-			fmt.Sprintf("network=%s/%s", cluster.Spec.SnippetStorageUri, ""),
+			fmt.Sprintf(
+				"user=%s%s-%s-user.yaml",
+				cluster.Spec.Snippets.StorageUri,
+				machine.Namespace, machine.Name,
+			),
+			fmt.Sprintf(
+				"network=%s%s-%s-network.yaml",
+				cluster.Spec.Snippets.StorageUri,
+				machine.Namespace, machine.Name,
+			),
 		}, ",")},
 	}
 
@@ -388,23 +474,23 @@ func loadVm(px *proxmox.Client, vmid int) (*proxmox.VirtualMachine, error) {
 		return nil, err
 	}
 
-	template := &proxmox.ClusterResource{}
+	vmTemplate := &proxmox.ClusterResource{}
 	for _, virtualMachine := range virtualMachines {
 		if int(virtualMachine.VMID) == vmid {
-			template = virtualMachine
+			vmTemplate = virtualMachine
 		}
 	}
 
-	if template == nil {
-		return nil, errors2.New("Failed to find VM in cluster")
+	if vmTemplate.VMID == 0 {
+		return nil, nil
 	}
 
-	node, err := px.Node(template.Node)
+	node, err := px.Node(vmTemplate.Node)
 	if err != nil {
 		return nil, err
 	}
 
-	return node.VirtualMachine(int(template.VMID))
+	return node.VirtualMachine(int(vmTemplate.VMID))
 }
 
 func remove(vm *proxmox.VirtualMachine) error {
@@ -427,13 +513,14 @@ func remove(vm *proxmox.VirtualMachine) error {
 }
 
 func writeUserDataFile(cluster *infrastructurev1alpha1.ProxmoxCluster, path string, contents []byte) error {
-	handle, err := vfssimple.NewFile(filepath.Join(cluster.Spec.SnippetStorageUri, path))
-	if err != nil {
-		return err
-	}
-
-	_, err = handle.Write(contents)
-	return err
+	//handle, err := vfssimple.NewFile(filepath.Join(cluster.Spec.SnippetStorageUri, path))
+	//if err != nil {
+	//	return err
+	//}
+	//
+	//_, err = handle.Write(contents)
+	//return err
+	return nil
 }
 
 func generateUserNetworkData(networks []infrastructurev1alpha1.ProxmoxNetwork) ([]byte, error) {
@@ -441,13 +528,25 @@ func generateUserNetworkData(networks []infrastructurev1alpha1.ProxmoxNetwork) (
 #cloud-config
 version: 1 
 config: 
-  {{range $item, $key := .Networks}}
-  - type: physical
-    subnets: 
-      - type: dhcp
-  {{end}}
+- type: physical
+  name: ens18 
+  subnets:
+    - type: dhcp
+- type: physical
+  name: ens19
+  subnets:
+    - type: dhcp
+- type: physical
+  name: ens20
+  subnets:
+    - type: dhcp
 `)
-
+	//  {{range $item, $key := .Networks}}
+	//  - type: physical
+	//    name: ens{{ $item }}
+	//    subnets:
+	//      - type: dhcp
+	//  {{end}}
 	if err != nil {
 		return []byte{}, err
 	}
@@ -461,50 +560,166 @@ config:
 	return buf.Bytes(), err
 }
 
-var defaultKubernetesScript = template.Must(template.New("install").Parse(`
-# Setup sysctl and modules
-cat <<EOF | tee /etc/modules-load.d/containerd.conf
-overlay
-br_netfilter
-EOF
-
-modprobe overlay
-modprobe br_netfilter
-
-cat <<EOF | sudo tee /etc/sysctl.d/99-kubernetes-cri.conf
-net.bridge.bridge-nf-call-iptables = 1
-net.bridge.bridge-nf-call-ip6tables = 1
-net.ipv4.ip_forward = 1
-EOF
-sysctl --system
-
-# Install containerd
-apt update -y
-apt install -y containerd
-mkdir -p /etc/containerd
-containerd config default | tee /etc/containerd/config.toml
-systemctl restart containerd
-systemctl status containerd
-
-# Install kubectl
-curl -LO "https://dl.k8s.io/release/v{{ .KubernetesVersion }}/bin/linux/amd64/kubectl"
-curl -LO "https://dl.k8s.io/v{{ .KubernetesVersion }}/bin/linux/amd64/kubectl.sha256"
-echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check
-
-# Install kubeadm
-`))
-
 var packageManagerInstallScript = template.Must(template.New("packages").Parse(`
 #!/usr/bin/env bash 
-
+K8S_VERSION="{{ .Kubernetes.Version }}"
+repo=${K8S_VERSION%.*}
 sudo apt-get update -y
 sudo apt-get install -y apt-transport-https ca-certificates curl
 
-sudo mkdir -m 755 /etc/apt/keyrings
-curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.28/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.28/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+sudo mkdir -p -m 755 /etc/apt/keyrings
+curl -fsSL https://pkgs.k8s.io/core:/stable:/${repo}/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/${repo}/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
 
 sudo apt-get update
-sudo apt-get install -y kubelet kubeadm kubectl
+sudo apt-get install -y kubelet={{.KubernetesVersion}} kubeadm={{.KubernetesVersion}} kubectl={{.KubernetesVersion}}
 sudo apt-mark hold kubelet kubeadm kubectl
 `))
+
+type BootstrapSecretFile struct {
+	Path        string `yaml:"path"`
+	Owner       string `yaml:"owner"`
+	Permissions string `yaml:"permissions"`
+	Content     string `yaml:"content"`
+}
+
+type BootstrapUser struct {
+	Name                string   `yaml:"name"`
+	Lock_Passwd         bool     `yaml:"lock_passwd"`
+	Sudo                string   `yaml:"sudo"`
+	Groups              []string `yaml:"groups"`
+	Ssh_Authorized_Keys []string `yaml:"ssh_authorized_keys"`
+}
+
+// users:
+//  - name: ubuntu
+//    lock_passwd: false
+//    sudo: "ALL=(ALL) NOPASSWD:ALL"
+//    groups:
+//      - sudo
+//    ssh_authorized_keys:
+//     - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFCLTBbrAHY00VcwXm1KiMcfCOmql06Hjtl0xyk/YrVg robwittman@github/82081183 # ssh-import-id gh:robwittman
+//     - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDMok8dumPcuErp7ZiKBaCEyY2unIEL98r1E2zRcg//aXZ3+7MB45sloqjHYrDZqn6Q4Ov//7+PxQnvm4AuWY8eWexd32gCGXBGq/+4EQl+tjFDsLmQej5ezEZEWfssgOGgX0TMWR+r7C65AM1EohJpWD2LuJgwqz2SCd9TQdfzRyLHnna3Wo/SKLbA9I84EdgNq9/gnu0+d26Q9kBRASPcKsG46bD6X9ehS6ptd/DSTQmyYucMvmevVA3Z17CJ22UPllfRvdV8IsWM4a3ZvdKgdrIp5a6drhWMIDkZ8AbVWkztY+r2Pn7rZ7efN0mJR/601HMOTRF2ywfcHxb6bE+teKnuhNYT++Po0XD/rR2z5SEi74/uRCv+SMNf3GwMelIYwGxuH34Eh9WoCA6516j3/vBrfqJk0XWlesjFImDYHXk7WblfgkG1obbHLJ2QY7O/VzCSLl29D5OTwZHoazarmBz+x+lsxN2Qg3GEvPkFNJto9R/kWvPvS2OgSnZYabE= robwittman@github/59786197 # ssh-import-id gh:robwittman
+//     - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEB2XYDUPU/MrNb8eTKnoz1vANw0u+G1089oC+WdRTb9 robwittman@github/81931695 # ssh-import-id gh:robwittman
+//     - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICJqx657ktJzgzKawXJbCkTYOq/2tpvupGxDLo1QosUP robwittman@github/60396273 # ssh-import-id gh:robwittman
+
+type BootstrapSecret struct {
+	RunCmd []string        `yaml:"runcmd"`
+	Users  []BootstrapUser `yaml:"users,omitempty"`
+	// TODO: Not sure why we need the underscore in the property name
+	Write_Files []BootstrapSecretFile `yaml:"write_files"`
+}
+
+func generateSnippets(
+	secret *v1.Secret,
+	version string,
+	credentialsSecret *v1.Secret,
+	storagePath string,
+	proxmoxMachine *infrastructurev1alpha1.ProxmoxMachine,
+) error {
+	bootstrapSecret := &BootstrapSecret{}
+	err := yaml.Unmarshal(secret.Data["value"], bootstrapSecret)
+	if err != nil {
+		return err
+	}
+
+	var buf bytes.Buffer
+	err = packageManagerInstallScript.Execute(&buf, struct {
+		KubernetesVersion string
+	}{
+		KubernetesVersion: version,
+	})
+	// Append the runCmd for our new scripte
+	bootstrapSecret.RunCmd = append([]string{
+		"sudo /init.sh",
+	}, bootstrapSecret.RunCmd...)
+	bootstrapSecret.Write_Files = append(
+		bootstrapSecret.Write_Files,
+		BootstrapSecretFile{
+			Path:        "/init.sh",
+			Permissions: "0755",
+			Owner:       "root:root",
+			Content:     string(buf.Bytes()),
+		},
+	)
+
+	if len(proxmoxMachine.Spec.SshKeys) > 0 {
+		bootstrapSecret.Users = []BootstrapUser{{
+			Name:                "ubuntu",
+			Lock_Passwd:         false,
+			Groups:              []string{"sudo"},
+			Sudo:                "ALL=(ALL) NOPASSWD:ALL",
+			Ssh_Authorized_Keys: proxmoxMachine.Spec.SshKeys,
+		}}
+	}
+
+	userContents, err := goyaml.Marshal(bootstrapSecret)
+	if err != nil {
+		return err
+	}
+
+	networkData, err := generateUserNetworkData(proxmoxMachine.Spec.Networks)
+	if err != nil {
+		return err
+	}
+
+	// We now have 2 snippets, let's write them to the storage
+	networkFileName := fmt.Sprintf("%s-%s-network.yaml", proxmoxMachine.Namespace, proxmoxMachine.Name)
+	userFileName := fmt.Sprintf("%s-%s-user.yaml", proxmoxMachine.Namespace, proxmoxMachine.Name)
+	err = writeFile(
+		credentialsSecret,
+		storagePath,
+		networkFileName,
+		networkData,
+	)
+	if err != nil {
+		return err
+	}
+
+	err = writeFile(
+		credentialsSecret,
+		storagePath,
+		userFileName,
+		[]byte(fmt.Sprintf(`
+#cloud-config 
+%s
+`, userContents)),
+	)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func writeFile(credentials *v1.Secret, storagePath string, filePath string, contents []byte) error {
+	config := &ssh.ClientConfig{
+		User: string(credentials.Data["user"]),
+		Auth: []ssh.AuthMethod{
+			ssh.Password(string(credentials.Data["password"])),
+		},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+	}
+	client, err := ssh.Dial("tcp", string(credentials.Data["host"]), config)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	fs, err := sftp.NewClient(client)
+	if err != nil {
+		return err
+	}
+	defer fs.Close()
+
+	dstFile, err := fs.Create(fmt.Sprintf(
+		"%s/%s", storagePath, filePath,
+	))
+	if err != nil {
+		return err
+	}
+	defer dstFile.Close()
+
+	_, err = dstFile.Write(contents)
+	return err
+}

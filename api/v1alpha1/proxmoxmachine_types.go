@@ -40,7 +40,8 @@ type ProxmoxMachineSpec struct {
 	Networks  []ProxmoxNetwork        `json:"networks"`
 	Disks     []ProxmoxDisk           `json:"disks"`
 
-	NetworkUserData string `json:"networkUserData,omitempty"`
+	NetworkUserData string   `json:"networkUserData,omitempty"`
+	SshKeys         []string `json:"sshKeys,omitempty"`
 }
 
 type ProxmoxMachineResources struct {

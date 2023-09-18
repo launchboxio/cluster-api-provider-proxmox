@@ -62,11 +62,21 @@ spec:
                     type: string
                 type: object
                 x-kubernetes-map-type: atomic
-              snippetStorageUri:
-                type: string
+              snippets:
+                properties:
+                  credentials:
+                    type: string
+                  storageUri:
+                    description: 'Configure the base URI for mounting the snippets
+                      storage on VMs Example: snippets-storage:/snippets/'
+                    type: string
+                required:
+                - credentials
+                - storageUri
+                type: object
             required:
             - controlPlaneEndpoint
-            - snippetStorageUri
+            - snippets
             type: object
           status:
             description: ProxmoxClusterStatus defines the observed state of ProxmoxCluster

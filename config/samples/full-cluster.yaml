@@ -43,7 +43,9 @@ spec:
   controlPlaneEndpoint:
     host: 172.30.101.2
     port: 6443
-  snippetStorageUri: "s3://asdfasdf"
+  snippets:
+    storageUri: "snippets:snippets/"
+    credentials: storage-access
 #  credentialsRef:
 #    name: testing
 #    namespace: default
@@ -97,7 +99,7 @@ metadata:
   namespace: default
 spec:
   clusterName: testing
-  replicas: 3
+  replicas: 1
   selector:
     matchLabels: null
   template:
@@ -114,13 +116,40 @@ spec:
       infrastructureRef:
         apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
         kind: ProxmoxMachineTemplate
-        name: testing-control-plane
+        name: testing-md-0
       version: v1.25.11
 ---
 apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
 kind: ProxmoxMachineTemplate
 metadata:
   name: testing-control-plane
+  namespace: default
+spec:
+  template:
+    spec:
+      targetNode: aphrodite
+      template: "VM 9001"
+      resources:
+        memory: 4096
+        cpuCores: 4
+        cpuSockets: 1
+      disks:
+        - type: scsi
+          size: "32G"
+          storage: "storage"
+      scsihw: "virtio-scsi-pci"
+      networks:
+        - model: virtio
+          bridge: vmbr1
+        - model: virtio
+          bridge: vmbr2
+        - model: virtio
+          bridge: vmbr3
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
+kind: ProxmoxMachineTemplate
+metadata:
+  name: testing-md-0
   namespace: default
 spec:
   template:
