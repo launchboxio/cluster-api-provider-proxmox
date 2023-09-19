@@ -59,6 +59,10 @@ metadata:
   namespace: default
 spec:
   kubeadmConfigSpec:
+    preKubeadmCommands:
+      - /init.sh
+    postKubeadmCommands:
+      - /register.sh
     clusterConfiguration:
       apiServer:
         certSANs:

@@ -52,6 +52,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	infrastructurev1alpha1 "github.com/launchboxio/cluster-api-provider-proxmox/api/v1alpha1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	//bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
 )
 
@@ -75,6 +76,7 @@ const (
 //+kubebuilder:rbac:groups=cluster.x-k8s.io,resources=machines;machines/status,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=events,verbs=get;list;watch;create;update;patch
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+//+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 
 const machineFinalizer = "infrastructure.cluster.x-k8s.io/finalizer"
 
@@ -313,6 +315,7 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			credentialsSecret,
 			"/mnt/default/snippets/snippets/",
 			proxmoxMachine,
+			machine,
 		)
 		if err != nil {
 			contextLogger.Info("Failed to generate snippet for machine")
@@ -603,7 +606,8 @@ var packageManagerInstallScript = template.Must(template.New("packages").Parse(`
 set -x
 
 hostnamectl set-hostname {{ .Hostname }}
-export repo=${1%.*}
+KUBERNETES_VERSION="{{ .KubernetesVersion }}"
+export repo=${KUBERNETES_VERSION%.*}
 apt-get update -y
 apt-get install -y apt-transport-https ca-certificates curl gnupg qemu-guest-agent wget
 
@@ -643,10 +647,22 @@ curl -fsSL https://pkgs.k8s.io/core:/stable:/v${repo}/deb/Release.key | gpg --de
 echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v${repo}/deb/ /" | tee /etc/apt/sources.list.d/kubernetes.list
 
 apt-get update -y
-apt-get install -y kubelet=$1-* kubeadm=$1-* kubectl=$1-*
+apt-get install -y kubelet=$KUBERNETES_VERSION-* kubeadm=$KUBERNETES_VERSION-* kubectl=$KUBERNETES_VERSION-*
 apt-mark hold kubelet kubeadm kubectl
 
 swapoff -a && sed -ri '/\sswap\s/s/^#?/#/' /etc/fstab
+`))
+
+var registerNodeScript = template.Must(template.New("register").Parse(`
+#!/usr/bin/env bash 
+
+NODE_NAME="{{ .NodeName }}"
+MACHINE="{{ .Machine }}"
+PROVIDER_ID="{{ .ProviderId }}"
+
+export KUBECONFIG=/etc/kubernetes/admin.conf
+kubectl annotate node $NODE_NAME "cluster.x-k8s.io=$MACHINE"
+kubectl patch node $NODE_NAME -p "{\"spec\":{\"providerID\":\"$PROVIDER_ID\"}}"
 `))
 
 type BootstrapSecretFile struct {
@@ -678,6 +694,7 @@ func generateSnippets(
 	credentialsSecret *v1.Secret,
 	storagePath string,
 	proxmoxMachine *infrastructurev1alpha1.ProxmoxMachine,
+	machine *clusterv1.Machine,
 ) error {
 	bootstrapSecret := &BootstrapSecret{}
 	err := yaml.Unmarshal(secret.Data["value"], bootstrapSecret)
@@ -685,24 +702,39 @@ func generateSnippets(
 		return err
 	}
 
-	var buf bytes.Buffer
+	var packageInstall bytes.Buffer
 	hostname := proxmoxMachine.Namespace + "-" + proxmoxMachine.Name
-	err = packageManagerInstallScript.Execute(&buf, struct {
-		Hostname string
+	err = packageManagerInstallScript.Execute(&packageInstall, struct {
+		Hostname          string
+		KubernetesVersion string
 	}{
-		Hostname: hostname,
+		Hostname:          hostname,
+		KubernetesVersion: strings.Trim(version, "v"),
 	})
-	// Append the runCmd for our new scripte
-	bootstrapSecret.RunCmd = append([]string{
-		fmt.Sprintf("sudo /init.sh %s", strings.TrimPrefix(version, "v")),
-	}, bootstrapSecret.RunCmd...)
+	var registerScript bytes.Buffer
+	err = registerNodeScript.Execute(&registerScript, struct {
+		NodeName   string
+		Machine    string
+		ProviderId string
+	}{
+		NodeName:   hostname,
+		Machine:    machine.Name,
+		ProviderId: proxmoxMachine.Spec.ProviderID,
+	})
 	bootstrapSecret.Write_Files = append(
 		bootstrapSecret.Write_Files,
 		BootstrapSecretFile{
 			Path:        "/init.sh",
 			Permissions: "0755",
 			Owner:       "root:root",
-			Content:     base64.StdEncoding.EncodeToString(buf.Bytes()),
+			Content:     base64.StdEncoding.EncodeToString(packageInstall.Bytes()),
+			Encoding:    "b64",
+		},
+		BootstrapSecretFile{
+			Path:        "/register.sh",
+			Permissions: "0755",
+			Owner:       "root:root",
+			Content:     base64.StdEncoding.EncodeToString(registerScript.Bytes()),
 			Encoding:    "b64",
 		},
 	)
