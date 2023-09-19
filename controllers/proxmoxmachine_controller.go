@@ -389,25 +389,6 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, nil
 	}
 
-	// Lastly, check runtime settings. Things like CPU, memory, etc
-	// can be changed on an instance that has been initialized already
-	options := pendingChanges(proxmoxMachine, vm)
-	if len(options) > 0 {
-		contextLogger.Info("VM out of sync, updating configuration")
-		task, err := vm.Config(options...)
-		if err != nil {
-			contextLogger.Error(err, "Failed to reconfigure VM")
-			return ctrl.Result{}, err
-		}
-
-		if err = task.Wait(time.Second*5, time.Minute*10); err != nil {
-			contextLogger.Error(err, "Timed out waiting for VM to finish configuring")
-			return ctrl.Result{}, err
-		}
-
-		return ctrl.Result{}, nil
-	}
-
 	contextLogger.Info("We have a created VM :shrug:")
 	return ctrl.Result{}, nil
 }
@@ -449,29 +430,6 @@ func vmInitializationOptions(cluster *infrastructurev1alpha1.ProxmoxCluster, mac
 	}
 
 	return options
-}
-
-func pendingChanges(machine *infrastructurev1alpha1.ProxmoxMachine, vm *proxmox.VirtualMachine) []proxmox.VirtualMachineOption {
-	opts := []proxmox.VirtualMachineOption{}
-
-	if vm.CPUs != machine.Spec.Resources.CpuCores {
-		opts = append(opts, proxmox.VirtualMachineOption{
-			Name:  "cores",
-			Value: machine.Spec.Resources.CpuCores,
-		})
-	}
-
-	// TODO: Due to differences in storage unit, memory
-	// always shows as a change. Fine for now, but should
-	// be addressed
-	if int(vm.MaxMem) != machine.Spec.Resources.Memory {
-		opts = append(opts, proxmox.VirtualMachineOption{
-			Name:  "memory",
-			Value: machine.Spec.Resources.Memory,
-		})
-	}
-
-	return opts
 }
 
 // TODO: Remove a requirement for Cluster setup. Folks should be able
@@ -546,17 +504,6 @@ func remove(vm *proxmox.VirtualMachine) error {
 	return nil
 }
 
-func writeUserDataFile(cluster *infrastructurev1alpha1.ProxmoxCluster, path string, contents []byte) error {
-	//handle, err := vfssimple.NewFile(filepath.Join(cluster.Spec.SnippetStorageUri, path))
-	//if err != nil {
-	//	return err
-	//}
-	//
-	//_, err = handle.Write(contents)
-	//return err
-	return nil
-}
-
 func generateUserNetworkData(networks []infrastructurev1alpha1.ProxmoxNetwork) ([]byte, error) {
 	tmpl, err := template.New("network").Parse(`
 #cloud-config
@@ -594,13 +541,6 @@ config:
 	return buf.Bytes(), err
 }
 
-// annotations:
-//
-//	cluster.x-k8s.io/machine: .KubeadmControlPlane.name
-//
-// spec:
-//
-//	providerID: .Machine.ProviderID
 var packageManagerInstallScript = template.Must(template.New("packages").Parse(`
 #!/usr/bin/env bash
 set -x
