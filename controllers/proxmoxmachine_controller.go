@@ -27,10 +27,11 @@ import (
 	"golang.org/x/crypto/ssh"
 	goyaml "gopkg.in/yaml.v3"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/yaml"
+	"sigs.k8s.io/cluster-api/api/v1beta1"
+	"sigs.k8s.io/cluster-api/util/conditions"
+	"strconv"
 
 	//"k8s.io/apimachinery/pkg/types"
 	"net/http"
@@ -62,6 +63,8 @@ type ProxmoxMachineReconciler struct {
 
 const (
 	VirtualMachineInitializing = "VirtualMachineInitializing"
+
+	ProviderIDPrefix = "proxmox://"
 )
 
 //+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=proxmoxmachines,verbs=get;list;watch;create;update;patch;delete
@@ -114,7 +117,13 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		if controllerutil.ContainsFinalizer(proxmoxMachine, machineFinalizer) {
 			// TODO: Perform out of band cleanup
 			contextLogger.Info("Cleaning up machine for finalizer")
-			vm, err := loadVm(proxmoxClient, proxmoxMachine.Status.Vmid)
+			vmid, err := strconv.Atoi(
+				strings.TrimPrefix(proxmoxMachine.Spec.ProviderID, ProviderIDPrefix),
+			)
+			if err != nil {
+				contextLogger.Error(err, "Failed parsing provider ID")
+			}
+			vm, err := loadVm(proxmoxClient, vmid)
 			if err != nil {
 				return ctrl.Result{}, err
 			}
@@ -192,11 +201,7 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
-	// Clone the machine, set the VMID in the status, and then
-	// simply return. We want to keep creation / and CRD updates
-	// as idempotent as possible
-
-	if proxmoxMachine.Status.Vmid == 0 {
+	if proxmoxMachine.Spec.ProviderID == "" {
 		// Try getting status again to prevent duplication of machines
 		if err := r.Get(ctx, req.NamespacedName, proxmoxMachine); err != nil {
 			contextLogger.Error(err, "Failed to get ProxmoxMachine")
@@ -211,17 +216,18 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, err
 		}
 
-		meta.SetStatusCondition(&proxmoxMachine.Status.Conditions, metav1.Condition{
-			Type:    VirtualMachineInitializing,
-			Status:  metav1.ConditionTrue,
-			Reason:  "Creating",
-			Message: "VM Created, Initializing for first launch",
-		})
-
-		proxmoxMachine.Status.Vmid = vmid
-		err = r.Status().Update(ctx, proxmoxMachine)
+		proxmoxMachine.Spec.ProviderID = fmt.Sprintf("%s%d", ProviderIDPrefix, vmid)
+		err = r.Update(ctx, proxmoxMachine)
 		if err != nil {
 			contextLogger.Error(err, "Failed updating ProxmoxMachine status")
+			return ctrl.Result{}, err
+		}
+
+		proxmoxMachine.Status.Vmid = vmid
+		conditions.MarkTrue(proxmoxMachine, VirtualMachineInitializing)
+
+		err = r.Status().Update(ctx, proxmoxMachine)
+		if err != nil {
 			return ctrl.Result{}, err
 		}
 
@@ -235,6 +241,14 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, nil
 	}
 
+	vmid, err := strconv.Atoi(
+		strings.TrimPrefix(proxmoxMachine.Spec.ProviderID, ProviderIDPrefix),
+	)
+	if err != nil {
+		contextLogger.Error(err, "Failed parsing provider ID")
+		return ctrl.Result{}, err
+	}
+
 	if !controllerutil.ContainsFinalizer(proxmoxMachine, machineFinalizer) {
 		contextLogger.Info("Attaching finalizer")
 		controllerutil.AddFinalizer(proxmoxMachine, machineFinalizer)
@@ -243,7 +257,7 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	// We should always have a new VM here. We query it to make sure
-	vm, err := loadVm(proxmoxClient, proxmoxMachine.Status.Vmid)
+	vm, err := loadVm(proxmoxClient, vmid)
 	if err != nil {
 		contextLogger.Error(err, "Failed getting VM status")
 		return ctrl.Result{}, err
@@ -270,7 +284,7 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// - Setup cicustom
 	// - Migrate to a target node
 	// - Start the Virtual Machine
-	if meta.IsStatusConditionTrue(proxmoxMachine.Status.Conditions, VirtualMachineInitializing) {
+	if conditions.IsTrue(proxmoxMachine, VirtualMachineInitializing) {
 		if machine.Spec.Bootstrap.DataSecretName == nil {
 			contextLogger.Info("No bootstrap secret found...")
 			return ctrl.Result{}, nil
@@ -329,18 +343,16 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 
 			// Reload the VM to get the appropriate node
-			vm, err = loadVm(proxmoxClient, proxmoxMachine.Status.Vmid)
+			vm, err = loadVm(proxmoxClient, vmid)
 			if err != nil {
 				return ctrl.Result{}, err
 			}
 		}
 
-		meta.SetStatusCondition(&proxmoxMachine.Status.Conditions, metav1.Condition{
-			Type:    VirtualMachineInitializing,
-			Status:  metav1.ConditionFalse,
-			Reason:  "Completed",
-			Message: "VM initialization completed",
-		})
+		conditions.MarkFalse(
+			proxmoxMachine, VirtualMachineInitializing, "Completed",
+			v1beta1.ConditionSeverityNone, "VM initialization completed")
+
 		err = r.Status().Update(ctx, proxmoxMachine)
 		if err != nil {
 			contextLogger.Error(err, "Failed updating ProxmoxMachine status")
@@ -358,6 +370,19 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, err
 		}
 
+		return ctrl.Result{}, nil
+	}
+
+	// Ensure our machine is marked as Ready
+	if !proxmoxMachine.Status.Ready {
+		_ = r.Get(ctx, req.NamespacedName, proxmoxMachine)
+		proxmoxMachine.Status.Ready = true
+		if err = r.Status().Update(ctx, proxmoxMachine); err != nil {
+			return ctrl.Result{}, err
+		}
+
+		conditions.MarkTrue(proxmoxMachine, "Ready")
+		err = r.Status().Update(ctx, proxmoxMachine)
 		return ctrl.Result{}, nil
 	}
 
@@ -566,10 +591,18 @@ config:
 	return buf.Bytes(), err
 }
 
+// annotations:
+//
+//	cluster.x-k8s.io/machine: .KubeadmControlPlane.name
+//
+// spec:
+//
+//	providerID: .Machine.ProviderID
 var packageManagerInstallScript = template.Must(template.New("packages").Parse(`
 #!/usr/bin/env bash
 set -x
 
+hostnamectl set-hostname {{ .Hostname }}
 export repo=${1%.*}
 apt-get update -y
 apt-get install -y apt-transport-https ca-certificates curl gnupg qemu-guest-agent wget
@@ -653,8 +686,12 @@ func generateSnippets(
 	}
 
 	var buf bytes.Buffer
-	err = packageManagerInstallScript.Execute(&buf, struct{}{})
 	hostname := proxmoxMachine.Namespace + "-" + proxmoxMachine.Name
+	err = packageManagerInstallScript.Execute(&buf, struct {
+		Hostname string
+	}{
+		Hostname: hostname,
+	})
 	// Append the runCmd for our new scripte
 	bootstrapSecret.RunCmd = append([]string{
 		fmt.Sprintf("sudo /init.sh %s", strings.TrimPrefix(version, "v")),
@@ -667,18 +704,6 @@ func generateSnippets(
 			Owner:       "root:root",
 			Content:     base64.StdEncoding.EncodeToString(buf.Bytes()),
 			Encoding:    "b64",
-		},
-		BootstrapSecretFile{
-			Path:        "/var/lib/cloud/data/set-hostname",
-			Permissions: "0644",
-			Owner:       "root:root",
-			Content: base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf(`
-{
-  "hostname": "%s",
-  "fqdn": "%s"
-}
-`, hostname, hostname))),
-			Encoding: "b64",
 		},
 	)
 

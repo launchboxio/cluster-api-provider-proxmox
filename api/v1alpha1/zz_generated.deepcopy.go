@@ -22,8 +22,7 @@ limitations under the License.
 package v1alpha1
 
 import (
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/api/core/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/cluster-api/api/v1beta1"
 )
@@ -287,7 +286,7 @@ func (in *ProxmoxMachinePoolSpec) DeepCopyInto(out *ProxmoxMachinePoolSpec) {
 	*out = *in
 	if in.MachineTemplateRef != nil {
 		in, out := &in.MachineTemplateRef, &out.MachineTemplateRef
-		*out = new(corev1.ObjectReference)
+		*out = new(v1.ObjectReference)
 		**out = **in
 	}
 }
@@ -368,7 +367,7 @@ func (in *ProxmoxMachineStatus) DeepCopyInto(out *ProxmoxMachineStatus) {
 	*out = *in
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
-		*out = make([]v1.Condition, len(*in))
+		*out = make([]v1beta1.Condition, len(*in))
 		for i := range *in {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}

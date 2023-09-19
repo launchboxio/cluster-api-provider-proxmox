@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -42,6 +43,8 @@ type ProxmoxMachineSpec struct {
 
 	NetworkUserData string   `json:"networkUserData,omitempty"`
 	SshKeys         []string `json:"sshKeys,omitempty"`
+
+	ProviderID string `json:"providerID,omitempty"`
 }
 
 type ProxmoxMachineResources struct {
@@ -70,8 +73,9 @@ type ProxmoxDisk struct {
 type ProxmoxMachineStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
-	Vmid       int                `json:"vmid"`
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	Vmid       int                   `json:"vmid"`
+	Ready      bool                  `json:"ready,omitempty"`
+	Conditions []clusterv1.Condition `json:"conditions,omitempty"`
 }
 
 //+kubebuilder:object:root=true
@@ -97,4 +101,14 @@ type ProxmoxMachineList struct {
 
 func init() {
 	SchemeBuilder.Register(&ProxmoxMachine{}, &ProxmoxMachineList{})
+}
+
+// GetConditions returns the conditions of ProxmoxMachine status
+func (proxmoxMachine *ProxmoxMachine) GetConditions() clusterv1.Conditions {
+	return proxmoxMachine.Status.Conditions
+}
+
+// SetConditions sets the conditions of ProxmoxMachine status
+func (proxmoxMachine *ProxmoxMachine) SetConditions(conditions clusterv1.Conditions) {
+	proxmoxMachine.Status.Conditions = conditions
 }

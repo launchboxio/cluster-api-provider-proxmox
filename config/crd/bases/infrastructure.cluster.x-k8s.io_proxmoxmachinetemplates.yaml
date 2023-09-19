@@ -81,6 +81,8 @@ spec:
                         description: Foo is an example field of ProxmoxMachineTemplate.
                           Edit proxmoxmachinetemplate_types.go to remove/update
                         type: boolean
+                      providerID:
+                        type: string
                       resources:
                         properties:
                           cpuCores:
