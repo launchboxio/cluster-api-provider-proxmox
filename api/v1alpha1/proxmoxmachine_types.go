@@ -44,7 +44,8 @@ type ProxmoxMachineSpec struct {
 	NetworkUserData string   `json:"networkUserData,omitempty"`
 	SshKeys         []string `json:"sshKeys,omitempty"`
 
-	ProviderID string `json:"providerID,omitempty"`
+	ProviderID string   `json:"providerID,omitempty"`
+	Tags       []string `json:"tags,omitempty"`
 }
 
 type ProxmoxMachineResources struct {

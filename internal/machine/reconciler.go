@@ -144,6 +144,16 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 		//return ctrl.Result{}, err
 	}
 
+	// Attach tags
+	for _, tag := range m.ProxmoxMachine.Spec.Tags {
+		if !vm.HasTag(tag) {
+			_, err := vm.AddTag(tag)
+			if err != nil {
+				m.Logger.Error(err, "Failed adding tag to VM")
+			}
+		}
+	}
+
 	// If VM is still showing as initializing, we want to perform further configuration
 	// - Configure network, disks, etc
 	// - Setup cicustom
