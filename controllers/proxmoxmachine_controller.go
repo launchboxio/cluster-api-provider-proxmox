@@ -17,20 +17,30 @@ limitations under the License.
 package controllers
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"fmt"
 	"github.com/luthermonson/go-proxmox"
-	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"github.com/pkg/sftp"
+	"golang.org/x/crypto/ssh"
+	goyaml "gopkg.in/yaml.v3"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/yaml"
+	"sigs.k8s.io/cluster-api/api/v1beta1"
+	"sigs.k8s.io/cluster-api/util/conditions"
+	"strconv"
+
+	//"k8s.io/apimachinery/pkg/types"
 	"net/http"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
 	"strings"
 	"time"
 
-	errors2 "errors"
+	"text/template"
 
 	//"github.com/Telmate/proxmox-api-go/proxmox"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -42,6 +52,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	infrastructurev1alpha1 "github.com/launchboxio/cluster-api-provider-proxmox/api/v1alpha1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	//bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
 )
 
 // ProxmoxMachineReconciler reconciles a ProxmoxMachine object
@@ -52,11 +64,19 @@ type ProxmoxMachineReconciler struct {
 
 const (
 	VirtualMachineInitializing = "VirtualMachineInitializing"
+
+	ProviderIDPrefix = "proxmox://"
 )
 
 //+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=proxmoxmachines,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=proxmoxmachines/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=proxmoxmachines/finalizers,verbs=update
+//+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=*,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters;machines,verbs=get;list;watch
+//+kubebuilder:rbac:groups=cluster.x-k8s.io,resources=machines;machines/status,verbs=get;list;watch
+//+kubebuilder:rbac:groups="",resources=events,verbs=get;list;watch;create;update;patch
+//+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+//+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 
 const machineFinalizer = "infrastructure.cluster.x-k8s.io/finalizer"
 
@@ -95,6 +115,38 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
+	if proxmoxMachine.GetDeletionTimestamp() != nil {
+		if controllerutil.ContainsFinalizer(proxmoxMachine, machineFinalizer) {
+			// TODO: Perform out of band cleanup
+			contextLogger.Info("Cleaning up machine for finalizer")
+			vmid, err := strconv.Atoi(
+				strings.TrimPrefix(proxmoxMachine.Spec.ProviderID, ProviderIDPrefix),
+			)
+			if err != nil {
+				contextLogger.Error(err, "Failed parsing provider ID")
+			}
+			vm, err := loadVm(proxmoxClient, vmid)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			if vm == nil {
+				// Couldnt find the VM, I suppose we assume its deleted
+				controllerutil.RemoveFinalizer(proxmoxMachine, machineFinalizer)
+				err = r.Update(context.TODO(), proxmoxMachine)
+				return ctrl.Result{}, err
+			}
+
+			err = remove(vm)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+
+			controllerutil.RemoveFinalizer(proxmoxMachine, machineFinalizer)
+			err = r.Update(context.TODO(), proxmoxMachine)
+			return ctrl.Result{}, err
+		}
+	}
+
 	machine, err := util.GetOwnerMachine(ctx, r.Client, proxmoxMachine.ObjectMeta)
 	if err != nil {
 		contextLogger.Error(err, "getting owning machine")
@@ -113,7 +165,7 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	if annotations.IsPaused(cluster, proxmoxMachine) {
-		contextLogger.Info("MicrovmMachine or linked Cluster is marked as paused. Won't reconcile")
+		contextLogger.Info("ProxmoCluster or linked Cluster is marked as paused. Won't reconcile")
 		return ctrl.Result{}, nil
 	}
 
@@ -132,36 +184,8 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, fmt.Errorf("error getting proxmoxcluster: %w", getErr)
 	}
 
-	machineTemplate := &infrastructurev1alpha1.ProxmoxMachineTemplate{}
-	if err := r.Get(ctx, types.NamespacedName{
-		Name:      proxmoxMachine.Spec.MachineTemplateRef.Name,
-		Namespace: proxmoxMachine.Spec.MachineTemplateRef.Namespace,
-	}, machineTemplate); err != nil {
-		contextLogger.Error(err, "Failed getting machine template")
-		return ctrl.Result{}, err
-	}
-
-	if proxmoxMachine.GetDeletionTimestamp() != nil {
-		if controllerutil.ContainsFinalizer(proxmoxMachine, machineFinalizer) {
-			// TODO: Perform out of band cleanup
-			contextLogger.Info("Cleaning up machine for finalizer")
-			vm, err := loadVm(proxmoxClient, proxmoxMachine.Status.Vmid)
-			if err != nil {
-				return ctrl.Result{}, err
-			}
-			err = remove(vm)
-			if err != nil {
-				return ctrl.Result{}, err
-			}
-
-			controllerutil.RemoveFinalizer(proxmoxMachine, machineFinalizer)
-			err = r.Update(context.TODO(), proxmoxMachine)
-			return ctrl.Result{}, err
-		}
-	}
-
 	// Fetch our VM template
-	clusterTemplate, err := getVmTemplate(proxmoxClient, machineTemplate.Spec.Template)
+	clusterTemplate, err := getVmTemplate(proxmoxClient, proxmoxMachine.Spec.Template)
 	if err != nil || clusterTemplate == nil {
 		contextLogger.Error(err, "Failed to get VM template")
 		return ctrl.Result{}, err
@@ -179,11 +203,12 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
-	// Clone the machine, set the VMID in the status, and then
-	// simply return. We want to keep creation / and CRD updates
-	// as idempotent as possible
-	if proxmoxMachine.Status.Vmid == 0 {
-
+	if proxmoxMachine.Spec.ProviderID == "" {
+		// Try getting status again to prevent duplication of machines
+		if err := r.Get(ctx, req.NamespacedName, proxmoxMachine); err != nil {
+			contextLogger.Error(err, "Failed to get ProxmoxMachine")
+			return ctrl.Result{}, err
+		}
 		vmid, task, err := template.Clone(&proxmox.VirtualMachineCloneOptions{
 			Name: fmt.Sprintf("%s-%s", proxmoxMachine.Namespace, proxmoxMachine.Name),
 		})
@@ -193,17 +218,18 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, err
 		}
 
-		meta.SetStatusCondition(&proxmoxMachine.Status.Conditions, metav1.Condition{
-			Type:    VirtualMachineInitializing,
-			Status:  metav1.ConditionTrue,
-			Reason:  "Creating",
-			Message: "VM Created, Initializing for first launch",
-		})
-
-		proxmoxMachine.Status.Vmid = vmid
-		err = r.Status().Update(ctx, proxmoxMachine)
+		proxmoxMachine.Spec.ProviderID = fmt.Sprintf("%s%d", ProviderIDPrefix, vmid)
+		err = r.Update(ctx, proxmoxMachine)
 		if err != nil {
 			contextLogger.Error(err, "Failed updating ProxmoxMachine status")
+			return ctrl.Result{}, err
+		}
+
+		proxmoxMachine.Status.Vmid = vmid
+		conditions.MarkTrue(proxmoxMachine, VirtualMachineInitializing)
+
+		err = r.Status().Update(ctx, proxmoxMachine)
+		if err != nil {
 			return ctrl.Result{}, err
 		}
 
@@ -217,6 +243,14 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, nil
 	}
 
+	vmid, err := strconv.Atoi(
+		strings.TrimPrefix(proxmoxMachine.Spec.ProviderID, ProviderIDPrefix),
+	)
+	if err != nil {
+		contextLogger.Error(err, "Failed parsing provider ID")
+		return ctrl.Result{}, err
+	}
+
 	if !controllerutil.ContainsFinalizer(proxmoxMachine, machineFinalizer) {
 		contextLogger.Info("Attaching finalizer")
 		controllerutil.AddFinalizer(proxmoxMachine, machineFinalizer)
@@ -225,18 +259,70 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	// We should always have a new VM here. We query it to make sure
-	vm, err := loadVm(proxmoxClient, proxmoxMachine.Status.Vmid)
+	vm, err := loadVm(proxmoxClient, vmid)
 	if err != nil {
 		contextLogger.Error(err, "Failed getting VM status")
 		return ctrl.Result{}, err
 	}
 
+	if vm == nil {
+		contextLogger.Info(fmt.Sprintf(
+			"Resource had VMID of %d, but it didnt exist in Proxmox. Purging and starting over",
+			proxmoxMachine.Status.Vmid,
+		))
+		return ctrl.Result{RequeueAfter: time.Minute * 5}, nil
+		// We have stored a proxmox VMID in the status of the CRD, yet the
+		// machine doesnt exist in proxmox. For now, let's just purge the
+		// status, ignore what exists in Proxmox, and create a fresh machine
+		// We don't want to do this. Any network connectivity issue with
+		// proxmox results in all of the machines being orphaned
+		//proxmoxMachine.Status.Vmid = 0
+		//proxmoxMachine.Status.Conditions = nil
+		//err = r.Status().Update(ctx, proxmoxMachine)
+		//return ctrl.Result{}, err
+	}
 	// If VM is still showing as initializing, we want to perform further configuration
 	// - Configure network, disks, etc
+	// - Setup cicustom
 	// - Migrate to a target node
 	// - Start the Virtual Machine
-	if meta.IsStatusConditionTrue(proxmoxMachine.Status.Conditions, VirtualMachineInitializing) {
-		task, err := vm.Config(vmInitializationOptions(proxmoxMachine, machineTemplate)...)
+	if conditions.IsTrue(proxmoxMachine, VirtualMachineInitializing) {
+		if machine.Spec.Bootstrap.DataSecretName == nil {
+			contextLogger.Info("No bootstrap secret found...")
+			return ctrl.Result{}, nil
+		}
+		bootstrapSecret := &v1.Secret{}
+		if err := r.Get(ctx, types.NamespacedName{
+			Namespace: proxmoxMachine.Namespace,
+			Name:      *machine.Spec.Bootstrap.DataSecretName,
+		}, bootstrapSecret); err != nil {
+			contextLogger.Info("Failed finding bootstrap secret")
+			return ctrl.Result{}, err
+		}
+
+		credentialsSecret := &v1.Secret{}
+		if err := r.Get(ctx, types.NamespacedName{
+			Namespace: proxmoxMachine.Namespace,
+			Name:      proxmoxCluster.Spec.Snippets.CredentialsSecretName,
+		}, credentialsSecret); err != nil {
+			contextLogger.Info("Failed finding storage credentials")
+			return ctrl.Result{}, err
+		}
+
+		err = generateSnippets(
+			bootstrapSecret,
+			"v1.25.11", // TODO: Pull Kubernetes version from CRD
+			credentialsSecret,
+			"/mnt/default/snippets/snippets/",
+			proxmoxMachine,
+			machine,
+		)
+		if err != nil {
+			contextLogger.Info("Failed to generate snippet for machine")
+			return ctrl.Result{}, err
+		}
+
+		task, err := vm.Config(vmInitializationOptions(proxmoxCluster, proxmoxMachine)...)
 		if err != nil {
 			contextLogger.Error(err, "Failed to reconfigure VM")
 			return ctrl.Result{}, err
@@ -247,7 +333,7 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, err
 		}
 
-		if vm.Node != proxmoxMachine.Spec.TargetNode {
+		if proxmoxMachine.Spec.TargetNode != "" && vm.Node != proxmoxMachine.Spec.TargetNode {
 			contextLogger.Info(fmt.Sprintf("Moving VM to node %s", proxmoxMachine.Spec.TargetNode))
 			task, err := vm.Migrate(proxmoxMachine.Spec.TargetNode, "")
 			if err != nil {
@@ -258,40 +344,48 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				contextLogger.Error(err, "Timed out waiting for VM to migrate")
 				return ctrl.Result{}, err
 			}
+
+			// Reload the VM to get the appropriate node
+			vm, err = loadVm(proxmoxClient, vmid)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
 		}
 
-		meta.SetStatusCondition(&proxmoxMachine.Status.Conditions, metav1.Condition{
-			Type:    VirtualMachineInitializing,
-			Status:  metav1.ConditionFalse,
-			Reason:  "Completed",
-			Message: "VM initialization completed",
-		})
+		conditions.MarkFalse(
+			proxmoxMachine, VirtualMachineInitializing, "Completed",
+			v1beta1.ConditionSeverityNone, "VM initialization completed")
+
 		err = r.Status().Update(ctx, proxmoxMachine)
 		if err != nil {
 			contextLogger.Error(err, "Failed updating ProxmoxMachine status")
 			return ctrl.Result{}, err
 		}
 
-		return ctrl.Result{}, nil
-	}
-
-	// Lastly, check runtime settings. Things like CPU, memory, etc
-	// can be changed on an instance that has been initialized already
-	options := pendingChanges(proxmoxMachine, machineTemplate, vm)
-	if len(options) > 0 {
-		fmt.Println(options)
-		contextLogger.Info("VM out of sync, updating configuration")
-		task, err := vm.Config(options...)
+		task, err = vm.Start()
 		if err != nil {
-			contextLogger.Error(err, "Failed to reconfigure VM")
+			contextLogger.Error(err, "Failed starting VM")
 			return ctrl.Result{}, err
 		}
 
 		if err = task.Wait(time.Second*5, time.Minute*10); err != nil {
-			contextLogger.Error(err, "Timed out waiting for VM to finish configuring")
+			contextLogger.Error(err, "Timed out waiting for VM to start")
 			return ctrl.Result{}, err
 		}
 
+		return ctrl.Result{}, nil
+	}
+
+	// Ensure our machine is marked as Ready
+	if !proxmoxMachine.Status.Ready {
+		_ = r.Get(ctx, req.NamespacedName, proxmoxMachine)
+		proxmoxMachine.Status.Ready = true
+		if err = r.Status().Update(ctx, proxmoxMachine); err != nil {
+			return ctrl.Result{}, err
+		}
+
+		conditions.MarkTrue(proxmoxMachine, "Ready")
+		err = r.Status().Update(ctx, proxmoxMachine)
 		return ctrl.Result{}, nil
 	}
 
@@ -306,15 +400,26 @@ func (r *ProxmoxMachineReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func vmInitializationOptions(machine *infrastructurev1alpha1.ProxmoxMachine, template *infrastructurev1alpha1.ProxmoxMachineTemplate) []proxmox.VirtualMachineOption {
+func vmInitializationOptions(cluster *infrastructurev1alpha1.ProxmoxCluster, machine *infrastructurev1alpha1.ProxmoxMachine) []proxmox.VirtualMachineOption {
 	options := []proxmox.VirtualMachineOption{
-		{Name: "memory", Value: template.Spec.Resources.Memory},
-		{Name: "sockets", Value: template.Spec.Resources.CpuSockets},
-		{Name: "cores", Value: template.Spec.Resources.CpuCores},
-		//{Name: "node", Value: machine.Spec.TargetNode},
+		{Name: "memory", Value: machine.Spec.Resources.Memory},
+		{Name: "sockets", Value: machine.Spec.Resources.CpuSockets},
+		{Name: "cores", Value: machine.Spec.Resources.CpuCores},
+		{Name: "cicustom", Value: strings.Join([]string{
+			fmt.Sprintf(
+				"user=%s%s-%s-user.yaml",
+				cluster.Spec.Snippets.StorageUri,
+				machine.Namespace, machine.Name,
+			),
+			fmt.Sprintf(
+				"network=%s%s-%s-network.yaml",
+				cluster.Spec.Snippets.StorageUri,
+				machine.Namespace, machine.Name,
+			),
+		}, ",")},
 	}
 
-	for idx, network := range template.Spec.Networks {
+	for idx, network := range machine.Spec.Networks {
 		options = append(options, proxmox.VirtualMachineOption{
 			Name: fmt.Sprintf("net%d", idx),
 			Value: strings.Join([]string{
@@ -325,29 +430,6 @@ func vmInitializationOptions(machine *infrastructurev1alpha1.ProxmoxMachine, tem
 	}
 
 	return options
-}
-
-func pendingChanges(machine *infrastructurev1alpha1.ProxmoxMachine, template *infrastructurev1alpha1.ProxmoxMachineTemplate, vm *proxmox.VirtualMachine) []proxmox.VirtualMachineOption {
-	opts := []proxmox.VirtualMachineOption{}
-
-	if vm.CPUs != template.Spec.Resources.CpuCores {
-		opts = append(opts, proxmox.VirtualMachineOption{
-			Name:  "cores",
-			Value: template.Spec.Resources.CpuCores,
-		})
-	}
-
-	// TODO: Due to differences in storage unit, memory
-	// always shows as a change. Fine for now, but should
-	// be addressed
-	if int(vm.MaxMem) != template.Spec.Resources.Memory {
-		opts = append(opts, proxmox.VirtualMachineOption{
-			Name:  "memory",
-			Value: template.Spec.Resources.Memory,
-		})
-	}
-
-	return opts
 }
 
 // TODO: Remove a requirement for Cluster setup. Folks should be able
@@ -384,23 +466,23 @@ func loadVm(px *proxmox.Client, vmid int) (*proxmox.VirtualMachine, error) {
 		return nil, err
 	}
 
-	template := &proxmox.ClusterResource{}
+	vmTemplate := &proxmox.ClusterResource{}
 	for _, virtualMachine := range virtualMachines {
 		if int(virtualMachine.VMID) == vmid {
-			template = virtualMachine
+			vmTemplate = virtualMachine
 		}
 	}
 
-	if template == nil {
-		return nil, errors2.New("Failed to find VM in cluster")
+	if vmTemplate.VMID == 0 {
+		return nil, nil
 	}
 
-	node, err := px.Node(template.Node)
+	node, err := px.Node(vmTemplate.Node)
 	if err != nil {
 		return nil, err
 	}
 
-	return node.VirtualMachine(int(template.VMID))
+	return node.VirtualMachine(int(vmTemplate.VMID))
 }
 
 func remove(vm *proxmox.VirtualMachine) error {
@@ -420,4 +502,260 @@ func remove(vm *proxmox.VirtualMachine) error {
 		return err
 	}
 	return nil
+}
+
+func generateUserNetworkData(networks []infrastructurev1alpha1.ProxmoxNetwork) ([]byte, error) {
+	tmpl, err := template.New("network").Parse(`
+#cloud-config
+version: 1
+config:
+- type: physical
+  name: ens18
+  subnets:
+    - type: dhcp
+- type: physical
+  name: ens19
+  subnets:
+    - type: dhcp
+- type: physical
+  name: ens20
+  subnets:
+    - type: dhcp
+`)
+	//  {{range $item, $key := .Networks}}
+	//  - type: physical
+	//    name: ens{{ $item }}
+	//    subnets:
+	//      - type: dhcp
+	//  {{end}}
+	if err != nil {
+		return []byte{}, err
+	}
+
+	var buf bytes.Buffer
+	err = tmpl.Execute(&buf, struct {
+		Networks []infrastructurev1alpha1.ProxmoxNetwork
+	}{
+		Networks: networks,
+	})
+	return buf.Bytes(), err
+}
+
+var packageManagerInstallScript = template.Must(template.New("packages").Parse(`
+#!/usr/bin/env bash
+set -x
+
+hostnamectl set-hostname {{ .Hostname }}
+KUBERNETES_VERSION="{{ .KubernetesVersion }}"
+export repo=${KUBERNETES_VERSION%.*}
+apt-get update -y
+apt-get install -y apt-transport-https ca-certificates curl gnupg qemu-guest-agent wget
+
+# systemctl enable qemu-guest-agent
+# systemctl start qemu-guest-agent
+
+swapoff -a && sed -ri '/\sswap\s/s/^#?/#/' /etc/fstab
+modprobe overlay && modprobe br_netfilter
+
+tee /etc/sysctl.d/kubernetes.conf <<EOF
+net.bridge.bridge-nf-call-ip6tables = 1
+net.bridge.bridge-nf-call-iptables = 1
+net.ipv4.ip_forward = 1
+EOF
+
+sysctl --system
+
+tee /etc/modules-load.d/k8s.conf <<EOF
+overlay
+br_netfilter
+EOF
+
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -
+add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+
+apt update -y
+apt install containerd.io -y
+mkdir /etc/containerd
+containerd config default>/etc/containerd/config.toml
+
+modprobe overlay && modprobe br_netfilter
+systemctl restart containerd
+systemctl enable containerd
+
+mkdir -p -m 755 /etc/apt/keyrings
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v${repo}/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v${repo}/deb/ /" | tee /etc/apt/sources.list.d/kubernetes.list
+
+apt-get update -y
+apt-get install -y kubelet=$KUBERNETES_VERSION-* kubeadm=$KUBERNETES_VERSION-* kubectl=$KUBERNETES_VERSION-*
+apt-mark hold kubelet kubeadm kubectl
+
+swapoff -a && sed -ri '/\sswap\s/s/^#?/#/' /etc/fstab
+`))
+
+var registerNodeScript = template.Must(template.New("register").Parse(`
+#!/usr/bin/env bash 
+
+NODE_NAME="{{ .NodeName }}"
+MACHINE="{{ .Machine }}"
+PROVIDER_ID="{{ .ProviderId }}"
+
+export KUBECONFIG=/etc/kubernetes/admin.conf
+kubectl annotate node $NODE_NAME "cluster.x-k8s.io=$MACHINE"
+kubectl patch node $NODE_NAME -p "{\"spec\":{\"providerID\":\"$PROVIDER_ID\"}}"
+`))
+
+type BootstrapSecretFile struct {
+	Path        string `yaml:"path"`
+	Owner       string `yaml:"owner"`
+	Permissions string `yaml:"permissions"`
+	Content     string `yaml:"content"`
+	Encoding    string `yaml:"encoding,omitempty"`
+}
+
+type BootstrapUser struct {
+	Name                string   `yaml:"name"`
+	Lock_Passwd         bool     `yaml:"lock_passwd"`
+	Sudo                string   `yaml:"sudo"`
+	Groups              []string `yaml:"groups"`
+	Ssh_Authorized_Keys []string `yaml:"ssh_authorized_keys"`
+}
+
+type BootstrapSecret struct {
+	RunCmd []string        `yaml:"runcmd"`
+	Users  []BootstrapUser `yaml:"users,omitempty"`
+	// TODO: Not sure why we need the underscore in the property name
+	Write_Files []BootstrapSecretFile `yaml:"write_files"`
+}
+
+func generateSnippets(
+	secret *v1.Secret,
+	version string,
+	credentialsSecret *v1.Secret,
+	storagePath string,
+	proxmoxMachine *infrastructurev1alpha1.ProxmoxMachine,
+	machine *clusterv1.Machine,
+) error {
+	bootstrapSecret := &BootstrapSecret{}
+	err := yaml.Unmarshal(secret.Data["value"], bootstrapSecret)
+	if err != nil {
+		return err
+	}
+
+	var packageInstall bytes.Buffer
+	hostname := proxmoxMachine.Namespace + "-" + proxmoxMachine.Name
+	err = packageManagerInstallScript.Execute(&packageInstall, struct {
+		Hostname          string
+		KubernetesVersion string
+	}{
+		Hostname:          hostname,
+		KubernetesVersion: strings.Trim(version, "v"),
+	})
+	var registerScript bytes.Buffer
+	err = registerNodeScript.Execute(&registerScript, struct {
+		NodeName   string
+		Machine    string
+		ProviderId string
+	}{
+		NodeName:   hostname,
+		Machine:    machine.Name,
+		ProviderId: proxmoxMachine.Spec.ProviderID,
+	})
+	bootstrapSecret.Write_Files = append(
+		bootstrapSecret.Write_Files,
+		BootstrapSecretFile{
+			Path:        "/init.sh",
+			Permissions: "0755",
+			Owner:       "root:root",
+			Content:     base64.StdEncoding.EncodeToString(packageInstall.Bytes()),
+			Encoding:    "b64",
+		},
+		BootstrapSecretFile{
+			Path:        "/register.sh",
+			Permissions: "0755",
+			Owner:       "root:root",
+			Content:     base64.StdEncoding.EncodeToString(registerScript.Bytes()),
+			Encoding:    "b64",
+		},
+	)
+
+	if len(proxmoxMachine.Spec.SshKeys) > 0 {
+		bootstrapSecret.Users = []BootstrapUser{{
+			Name:                "ubuntu",
+			Lock_Passwd:         false,
+			Groups:              []string{"sudo"},
+			Sudo:                "ALL=(ALL) NOPASSWD:ALL",
+			Ssh_Authorized_Keys: proxmoxMachine.Spec.SshKeys,
+		}}
+	}
+
+	userContents, err := goyaml.Marshal(bootstrapSecret)
+	if err != nil {
+		return err
+	}
+
+	networkData, err := generateUserNetworkData(proxmoxMachine.Spec.Networks)
+	if err != nil {
+		return err
+	}
+
+	// We now have 2 snippets, let's write them to the storage
+	networkFileName := fmt.Sprintf("%s-%s-network.yaml", proxmoxMachine.Namespace, proxmoxMachine.Name)
+	userFileName := fmt.Sprintf("%s-%s-user.yaml", proxmoxMachine.Namespace, proxmoxMachine.Name)
+	err = writeFile(
+		credentialsSecret,
+		storagePath,
+		networkFileName,
+		networkData,
+	)
+	if err != nil {
+		return err
+	}
+
+	err = writeFile(
+		credentialsSecret,
+		storagePath,
+		userFileName,
+		[]byte(fmt.Sprintf(`
+#cloud-config
+%s
+`, userContents)),
+	)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func writeFile(credentials *v1.Secret, storagePath string, filePath string, contents []byte) error {
+	config := &ssh.ClientConfig{
+		User: string(credentials.Data["user"]),
+		Auth: []ssh.AuthMethod{
+			ssh.Password(string(credentials.Data["password"])),
+		},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+	}
+	client, err := ssh.Dial("tcp", string(credentials.Data["host"]), config)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	fs, err := sftp.NewClient(client)
+	if err != nil {
+		return err
+	}
+	defer fs.Close()
+
+	dstFile, err := fs.Create(fmt.Sprintf(
+		"%s/%s", storagePath, filePath,
+	))
+	if err != nil {
+		return err
+	}
+	defer dstFile.Close()
+
+	_, err = dstFile.Write(contents)
+	return err
 }

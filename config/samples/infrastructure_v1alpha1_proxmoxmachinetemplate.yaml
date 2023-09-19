@@ -9,21 +9,23 @@ metadata:
     app.kubernetes.io/created-by: cluster-api-provider-proxmox
   name: proxmoxmachinetemplate-sample
 spec:
-  template: "VM 9001"
-  resources:
-    memory: 4096
-    cpuCores: 4
-    cpuSockets: 1
-  disks:
-    - type: scsi
-      size: "32G"
-      storage: "storage"
-  scsihw: "virtio-scsi-pci"
-  networks:
-    - model: virtio
-      bridge: vmbr1
-    - model: virtio
-      bridge: vmbr2
-    - model: virtio
-      bridge: vmbr3
-  # TODO(user): Add fields here
+  template:
+    spec:
+      template: "VM 9001"
+      resources:
+        memory: 4096
+        cpuCores: 4
+        cpuSockets: 1
+      disks:
+        - type: scsi
+          size: "32G"
+          storage: "storage"
+      scsihw: "virtio-scsi-pci"
+      networks:
+        - model: virtio
+          bridge: vmbr1
+        - model: virtio
+          bridge: vmbr2
+        - model: virtio
+          bridge: vmbr3
+      # TODO(user): Add fields here

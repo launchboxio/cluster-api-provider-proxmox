@@ -1,0 +1,243 @@
+---
+apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+kind: KubeadmConfigTemplate
+metadata:
+  name: testing-md-0
+  namespace: default
+spec:
+  template:
+    spec: {}
+---
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: Cluster
+metadata:
+  labels:
+    cni: testing-crs-0
+    crs: "true"
+  name: testing
+  namespace: default
+spec:
+  clusterNetwork:
+    pods:
+      cidrBlocks:
+        - 192.168.0.0/16
+    serviceDomain: cluster.local
+    services:
+      cidrBlocks:
+        - 10.128.0.0/12
+  controlPlaneRef:
+    apiVersion: controlplane.cluster.x-k8s.io/v1beta1
+    kind: KubeadmControlPlane
+    name: testing-control-plane
+  infrastructureRef:
+    apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+    kind: ProxmoxCluster
+    name: testing
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
+kind: ProxmoxCluster
+metadata:
+  name: testing
+  namespace: default
+spec:
+  controlPlaneEndpoint:
+    host: 172.30.101.2
+    port: 6443
+  snippets:
+    storageUri: "snippets:snippets/"
+    credentials: storage-access
+#  credentialsRef:
+#    name: testing
+#    namespace: default
+---
+apiVersion: controlplane.cluster.x-k8s.io/v1beta1
+kind: KubeadmControlPlane
+metadata:
+  labels:
+    nodepool: pool0
+  name: testing-control-plane
+  namespace: default
+spec:
+  kubeadmConfigSpec:
+    preKubeadmCommands:
+      - /init.sh
+    postKubeadmCommands:
+      - /register.sh
+    clusterConfiguration:
+      apiServer:
+        certSANs:
+          - localhost
+          - 127.0.0.1
+          - 0.0.0.0
+          - host.docker.internal
+      controllerManager:
+        extraArgs:
+          enable-hostpath-provisioner: "true"
+    files:
+      - content: |
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            creationTimestamp: null
+            name: kube-vip
+            namespace: kube-system
+          spec:
+            containers:
+            - args:
+              - manager
+              env:
+              - name: cp_enable
+                value: "true"
+              - name: vip_arp
+                value: "true"
+              - name: vip_leaderelection
+                value: "true"
+              - name: vip_address
+                value: 172.30.101.2
+              - name: vip_interface
+                value: ens18
+              - name: vip_leaseduration
+                value: "15"
+              - name: vip_renewdeadline
+                value: "10"
+              - name: vip_retryperiod
+                value: "2"
+              image: ghcr.io/kube-vip/kube-vip:v0.5.0
+              imagePullPolicy: IfNotPresent
+              name: kube-vip
+              resources: {}
+              securityContext:
+                capabilities:
+                  add:
+                  - NET_ADMIN
+                  - NET_RAW
+              volumeMounts:
+              - mountPath: /etc/kubernetes/admin.conf
+                name: kubeconfig
+            hostNetwork: true
+            hostAliases:
+              - hostnames:
+                  - kubernetes
+                ip: 127.0.0.1
+            volumes:
+            - hostPath:
+                path: /etc/kubernetes/admin.conf
+                type: FileOrCreate
+              name: kubeconfig
+          status: {}
+        owner: root:root
+        path: /etc/kubernetes/manifests/kube-vip.yaml
+    initConfiguration:
+      nodeRegistration:
+        criSocket: /var/run/containerd/containerd.sock
+        ignorePreflightErrors:
+          - Swap
+          - DirAvailable--etc-kubernetes-manifests
+          - FileAvailable--etc-kubernetes-kubelet.conf
+    joinConfiguration:
+      nodeRegistration:
+        criSocket: /var/run/containerd/containerd.sock
+        ignorePreflightErrors:
+          - Swap
+          - DirAvailable--etc-kubernetes-manifests
+          - FileAvailable--etc-kubernetes-kubelet.conf
+  machineTemplate:
+    infrastructureRef:
+      apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
+      kind: ProxmoxMachineTemplate
+      name: testing-control-plane
+      namespace: default
+  replicas: 3
+  version: v1.25.11
+---
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: MachineDeployment
+metadata:
+  name: testing-md-0
+  namespace: default
+spec:
+  clusterName: testing
+  replicas: 1
+  selector:
+    matchLabels: null
+  template:
+    metadata:
+      labels:
+        nodepool: pool1
+    spec:
+      bootstrap:
+        configRef:
+          apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+          kind: KubeadmConfigTemplate
+          name: testing-md-0
+      clusterName: testing
+      infrastructureRef:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
+        kind: ProxmoxMachineTemplate
+        name: testing-md-0
+      version: v1.25.11
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
+kind: ProxmoxMachineTemplate
+metadata:
+  name: testing-control-plane
+  namespace: default
+spec:
+  template:
+    spec:
+      targetNode: aphrodite
+      template: "VM 9001"
+      resources:
+        memory: 4096
+        cpuCores: 4
+        cpuSockets: 1
+      disks:
+        - type: scsi
+          size: "32G"
+          storage: "storage"
+      scsihw: "virtio-scsi-pci"
+      networks:
+        - model: virtio
+          bridge: vmbr1
+        - model: virtio
+          bridge: vmbr2
+        - model: virtio
+          bridge: vmbr3
+      sshKeys:
+        - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEB2XYDUPU/MrNb8eTKnoz1vANw0u+G1089oC+WdRTb9 robwittman@github/81931695 # ssh-import-id gh:robwittman"
+        - "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDMok8dumPcuErp7ZiKBaCEyY2unIEL98r1E2zRcg//aXZ3+7MB45sloqjHYrDZqn6Q4Ov//7+PxQnvm4AuWY8eWexd32gCGXBGq/+4EQl+tjFDsLmQej5ezEZEWfssgOGgX0TMWR+r7C65AM1EohJpWD2LuJgwqz2SCd9TQdfzRyLHnna3Wo/SKLbA9I84EdgNq9/gnu0+d26Q9kBRASPcKsG46bD6X9ehS6ptd/DSTQmyYucMvmevVA3Z17CJ22UPllfRvdV8IsWM4a3ZvdKgdrIp5a6drhWMIDkZ8AbVWkztY+r2Pn7rZ7efN0mJR/601HMOTRF2ywfcHxb6bE+teKnuhNYT++Po0XD/rR2z5SEi74/uRCv+SMNf3GwMelIYwGxuH34Eh9WoCA6516j3/vBrfqJk0XWlesjFImDYHXk7WblfgkG1obbHLJ2QY7O/VzCSLl29D5OTwZHoazarmBz+x+lsxN2Qg3GEvPkFNJto9R/kWvPvS2OgSnZYabE= robwittman@github/59786197 # ssh-import-id gh:robwittman"
+        - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFCLTBbrAHY00VcwXm1KiMcfCOmql06Hjtl0xyk/YrVg robwittman@github/82081183 # ssh-import-id gh:robwittman"
+        - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICJqx657ktJzgzKawXJbCkTYOq/2tpvupGxDLo1QosUP robwittman@github/60396273 # ssh-import-id gh:robwittman"
+
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
+kind: ProxmoxMachineTemplate
+metadata:
+  name: testing-md-0
+  namespace: default
+spec:
+  template:
+    spec:
+      targetNode: aphrodite
+      template: "VM 9001"
+      resources:
+        memory: 4096
+        cpuCores: 4
+        cpuSockets: 1
+      disks:
+        - type: scsi
+          size: "32G"
+          storage: "storage"
+      scsihw: "virtio-scsi-pci"
+      networks:
+        - model: virtio
+          bridge: vmbr1
+        - model: virtio
+          bridge: vmbr2
+        - model: virtio
+          bridge: vmbr3
+      sshKeys:
+        - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEB2XYDUPU/MrNb8eTKnoz1vANw0u+G1089oC+WdRTb9 robwittman@github/81931695 # ssh-import-id gh:robwittman"
+        - "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDMok8dumPcuErp7ZiKBaCEyY2unIEL98r1E2zRcg//aXZ3+7MB45sloqjHYrDZqn6Q4Ov//7+PxQnvm4AuWY8eWexd32gCGXBGq/+4EQl+tjFDsLmQej5ezEZEWfssgOGgX0TMWR+r7C65AM1EohJpWD2LuJgwqz2SCd9TQdfzRyLHnna3Wo/SKLbA9I84EdgNq9/gnu0+d26Q9kBRASPcKsG46bD6X9ehS6ptd/DSTQmyYucMvmevVA3Z17CJ22UPllfRvdV8IsWM4a3ZvdKgdrIp5a6drhWMIDkZ8AbVWkztY+r2Pn7rZ7efN0mJR/601HMOTRF2ywfcHxb6bE+teKnuhNYT++Po0XD/rR2z5SEi74/uRCv+SMNf3GwMelIYwGxuH34Eh9WoCA6516j3/vBrfqJk0XWlesjFImDYHXk7WblfgkG1obbHLJ2QY7O/VzCSLl29D5OTwZHoazarmBz+x+lsxN2Qg3GEvPkFNJto9R/kWvPvS2OgSnZYabE= robwittman@github/59786197 # ssh-import-id gh:robwittman"
+        - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFCLTBbrAHY00VcwXm1KiMcfCOmql06Hjtl0xyk/YrVg robwittman@github/82081183 # ssh-import-id gh:robwittman"
+        - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICJqx657ktJzgzKawXJbCkTYOq/2tpvupGxDLo1QosUP robwittman@github/60396273 # ssh-import-id gh:robwittman"

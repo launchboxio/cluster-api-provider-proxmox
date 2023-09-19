@@ -25,39 +25,12 @@ import (
 
 // ProxmoxMachineTemplateSpec defines the desired state of ProxmoxMachineTemplate
 type ProxmoxMachineTemplateSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// Foo is an example field of ProxmoxMachineTemplate. Edit proxmoxmachinetemplate_types.go to remove/update
-	OnBoot bool   `json:"onboot,omitempty"`
-	Scsihw string `json:"scsihw,omitempty"`
-
-	Template  string                  `json:"template"`
-	Resources ProxmoxMachineResources `json:"resources"`
-	Networks  []ProxmoxNetwork        `json:"networks"`
-	Disks     []ProxmoxDisk           `json:"disks"`
+	Template ProxmoxMachineTemplateResource `json:"template"`
 }
 
-type ProxmoxMachineResources struct {
-	Memory     int `json:"memory,omitempty"`
-	CpuCores   int `json:"cpuCores,omitempty"`
-	CpuSockets int `json:"cpuSockets,omitempty"`
-}
-
-type ProxmoxNetwork struct {
-	Model    string `json:"model"`
-	Bridge   string `json:"bridge"`
-	Firewall bool   `json:"firewall,omitempty"`
-	Backup   bool   `json:"backup,omitempty"`
-	Tag      string `json:"tag,omitempty"`
-}
-
-type ProxmoxDisk struct {
-	Type        string `json:"type,omitempty"`
-	Storage     string `json:"storage,omitempty"`
-	Size        string `json:"size,omitempty"`
-	StorageType string `json:"storageType,omitempty"`
-	Backup      bool   `json:"backup,omitempty"`
+type ProxmoxMachineTemplateResource struct {
+	// Spec is the specification of the desired behavior of the machine.
+	Spec ProxmoxMachineSpec `json:"spec"`
 }
 
 // ProxmoxMachineTemplateStatus defines the observed state of ProxmoxMachineTemplate

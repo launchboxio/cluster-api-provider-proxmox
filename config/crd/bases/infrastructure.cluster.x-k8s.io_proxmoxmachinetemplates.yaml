@@ -36,60 +36,84 @@ spec:
           spec:
             description: ProxmoxMachineTemplateSpec defines the desired state of ProxmoxMachineTemplate
             properties:
-              disks:
-                items:
-                  properties:
-                    backup:
-                      type: boolean
-                    size:
-                      type: string
-                    storage:
-                      type: string
-                    storage_type:
-                      type: string
-                    type:
-                      type: string
-                  type: object
-                type: array
-              networks:
-                items:
-                  properties:
-                    backup:
-                      type: boolean
-                    bridge:
-                      type: string
-                    firewall:
-                      type: boolean
-                    model:
-                      type: string
-                    tag:
-                      type: string
-                  required:
-                  - bridge
-                  - model
-                  type: object
-                type: array
-              onboot:
-                description: Foo is an example field of ProxmoxMachineTemplate. Edit
-                  proxmoxmachinetemplate_types.go to remove/update
-                type: boolean
-              resources:
-                properties:
-                  cpu_cores:
-                    type: integer
-                  cpu_sockets:
-                    type: integer
-                  memory:
-                    type: integer
-                type: object
-              scsihw:
-                type: string
               template:
-                type: string
+                properties:
+                  spec:
+                    description: Spec is the specification of the desired behavior
+                      of the machine.
+                    properties:
+                      disks:
+                        items:
+                          properties:
+                            backup:
+                              type: boolean
+                            size:
+                              type: string
+                            storage:
+                              type: string
+                            storageType:
+                              type: string
+                            type:
+                              type: string
+                          type: object
+                        type: array
+                      networkUserData:
+                        type: string
+                      networks:
+                        items:
+                          properties:
+                            backup:
+                              type: boolean
+                            bridge:
+                              type: string
+                            firewall:
+                              type: boolean
+                            model:
+                              type: string
+                            tag:
+                              type: string
+                          required:
+                          - bridge
+                          - model
+                          type: object
+                        type: array
+                      onboot:
+                        description: Foo is an example field of ProxmoxMachineTemplate.
+                          Edit proxmoxmachinetemplate_types.go to remove/update
+                        type: boolean
+                      providerID:
+                        type: string
+                      resources:
+                        properties:
+                          cpuCores:
+                            type: integer
+                          cpuSockets:
+                            type: integer
+                          memory:
+                            type: integer
+                        type: object
+                      scsihw:
+                        type: string
+                      sshKeys:
+                        items:
+                          type: string
+                        type: array
+                      targetNode:
+                        description: Foo is an example field of ProxmoxMachine. Edit
+                          proxmoxmachine_types.go to remove/update
+                        type: string
+                      template:
+                        type: string
+                    required:
+                    - disks
+                    - networks
+                    - resources
+                    - template
+                    type: object
+                required:
+                - spec
+                type: object
             required:
-            - disks
-            - networks
-            - resources
             - template
             type: object
           status:

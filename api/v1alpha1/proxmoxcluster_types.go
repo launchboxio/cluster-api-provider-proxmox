@@ -34,6 +34,17 @@ type ProxmoxClusterSpec struct {
 
 	// Secret with credentials for accessing the Proxmox API
 	CredentialsRef v1.SecretReference `json:"credentialsRef,omitempty"`
+
+	Snippets ProxmoxClusterSnippetsConfig `json:"snippets"`
+}
+
+type ProxmoxClusterSnippetsConfig struct {
+	// Configure the base URI for mounting the
+	// snippets storage on VMs
+	// Example: snippets-storage:/snippets/
+	StorageUri string `json:"storageUri"`
+
+	CredentialsSecretName string `json:"credentials"`
 }
 
 // ProxmoxClusterStatus defines the observed state of ProxmoxCluster

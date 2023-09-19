@@ -35,7 +35,7 @@ spec:
           spec:
             description: ProxmoxClusterSpec defines the desired state of ProxmoxCluster
             properties:
-              control_plane_endpoint:
+              controlPlaneEndpoint:
                 description: APIEndpoint represents a reachable Kubernetes API endpoint.
                 properties:
                   host:
@@ -62,8 +62,21 @@ spec:
                     type: string
                 type: object
                 x-kubernetes-map-type: atomic
+              snippets:
+                properties:
+                  credentials:
+                    type: string
+                  storageUri:
+                    description: 'Configure the base URI for mounting the snippets
+                      storage on VMs Example: snippets-storage:/snippets/'
+                    type: string
+                required:
+                - credentials
+                - storageUri
+                type: object
             required:
-            - control_plane_endpoint
+            - controlPlaneEndpoint
+            - snippets
             type: object
           status:
             description: ProxmoxClusterStatus defines the observed state of ProxmoxCluster

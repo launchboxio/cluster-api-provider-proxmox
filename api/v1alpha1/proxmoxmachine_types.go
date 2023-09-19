@@ -17,8 +17,8 @@ limitations under the License.
 package v1alpha1
 
 import (
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -32,15 +32,50 @@ type ProxmoxMachineSpec struct {
 	// Foo is an example field of ProxmoxMachine. Edit proxmoxmachine_types.go to remove/update
 	TargetNode string `json:"targetNode,omitempty"`
 
-	MachineTemplateRef *corev1.ObjectReference `json:"machineTemplateRef"`
+	// Foo is an example field of ProxmoxMachineTemplate. Edit proxmoxmachinetemplate_types.go to remove/update
+	OnBoot bool   `json:"onboot,omitempty"`
+	Scsihw string `json:"scsihw,omitempty"`
+
+	Template  string                  `json:"template"`
+	Resources ProxmoxMachineResources `json:"resources"`
+	Networks  []ProxmoxNetwork        `json:"networks"`
+	Disks     []ProxmoxDisk           `json:"disks"`
+
+	NetworkUserData string   `json:"networkUserData,omitempty"`
+	SshKeys         []string `json:"sshKeys,omitempty"`
+
+	ProviderID string `json:"providerID,omitempty"`
+}
+
+type ProxmoxMachineResources struct {
+	Memory     int `json:"memory,omitempty"`
+	CpuCores   int `json:"cpuCores,omitempty"`
+	CpuSockets int `json:"cpuSockets,omitempty"`
+}
+
+type ProxmoxNetwork struct {
+	Model    string `json:"model"`
+	Bridge   string `json:"bridge"`
+	Firewall bool   `json:"firewall,omitempty"`
+	Backup   bool   `json:"backup,omitempty"`
+	Tag      string `json:"tag,omitempty"`
+}
+
+type ProxmoxDisk struct {
+	Type        string `json:"type,omitempty"`
+	Storage     string `json:"storage,omitempty"`
+	Size        string `json:"size,omitempty"`
+	StorageType string `json:"storageType,omitempty"`
+	Backup      bool   `json:"backup,omitempty"`
 }
 
 // ProxmoxMachineStatus defines the observed state of ProxmoxMachine
 type ProxmoxMachineStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
-	Vmid       int                `json:"vmid"`
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	Vmid       int                   `json:"vmid"`
+	Ready      bool                  `json:"ready,omitempty"`
+	Conditions []clusterv1.Condition `json:"conditions,omitempty"`
 }
 
 //+kubebuilder:object:root=true
@@ -66,4 +101,14 @@ type ProxmoxMachineList struct {
 
 func init() {
 	SchemeBuilder.Register(&ProxmoxMachine{}, &ProxmoxMachineList{})
+}
+
+// GetConditions returns the conditions of ProxmoxMachine status
+func (proxmoxMachine *ProxmoxMachine) GetConditions() clusterv1.Conditions {
+	return proxmoxMachine.Status.Conditions
+}
+
+// SetConditions sets the conditions of ProxmoxMachine status
+func (proxmoxMachine *ProxmoxMachine) SetConditions(conditions clusterv1.Conditions) {
+	proxmoxMachine.Status.Conditions = conditions
 }
