@@ -252,7 +252,6 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{}, nil
 	}
 
-	m.Logger.Info("We have a created VM :shrug:")
 	return ctrl.Result{}, nil
 }
 
