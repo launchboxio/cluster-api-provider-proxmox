@@ -39,6 +39,9 @@ type ProxmoxClusterSpec struct {
 	// The Proxmox resource pool to attach created VMs to.
 	// If it doesnt exist, operator will create it first
 	Pool string `json:"pool,omitempty"`
+
+	// Global tags applied to all instances for the cluster
+	Tags []string `json:"tags,omitempty"`
 }
 
 type ProxmoxClusterSnippetsConfig struct {
