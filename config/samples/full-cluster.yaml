@@ -49,6 +49,8 @@ spec:
   pool: testing
   tags:
     - testing
+  deletionProtection:
+    enabled: true
 #  credentialsRef:
 #    name: testing
 #    namespace: default
