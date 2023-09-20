@@ -64,21 +64,26 @@ func (r *ProxmoxClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
-	if !controllerutil.ContainsFinalizer(proxmoxCluster, clusterFinalizer) {
-		controllerutil.AddFinalizer(proxmoxCluster, clusterFinalizer)
-		err := r.Update(ctx, proxmoxCluster)
-		return ctrl.Result{}, err
+	// If DeletionProtection is enabled, ensure our no-op finalizer is attached
+	if proxmoxCluster.Spec.DeletionProtection.Enabled {
+		if !controllerutil.ContainsFinalizer(proxmoxCluster, clusterFinalizer) {
+			controllerutil.AddFinalizer(proxmoxCluster, clusterFinalizer)
+			err := r.Update(ctx, proxmoxCluster)
+			return ctrl.Result{}, err
+		}
+	} else {
+		if !controllerutil.ContainsFinalizer(proxmoxCluster, clusterFinalizer) {
+			controllerutil.RemoveFinalizer(proxmoxCluster, clusterFinalizer)
+			err := r.Update(ctx, proxmoxCluster)
+			return ctrl.Result{}, err
+		}
 	}
 
 	if proxmoxCluster.GetDeletionTimestamp() != nil {
 		if controllerutil.ContainsFinalizer(proxmoxCluster, clusterFinalizer) {
-			contextLogger.Info("Delete event found for cluster finalizer")
-			// TODO: Maybe users will want to delete the pool?
-			controllerutil.RemoveFinalizer(proxmoxCluster, clusterFinalizer)
-			err := r.Update(context.TODO(), proxmoxCluster)
-			return ctrl.Result{}, err
+			// No-op, we simply dont act on deletion if the finalizer exists
+			return ctrl.Result{}, nil
 		}
-		return ctrl.Result{}, nil
 	}
 
 	cluster, err := util.GetOwnerCluster(ctx, r.Client, proxmoxCluster.ObjectMeta)
