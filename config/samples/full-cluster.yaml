@@ -46,6 +46,7 @@ spec:
   snippets:
     storageUri: "snippets:snippets/"
     credentials: storage-access
+  pool: testing
 #  credentialsRef:
 #    name: testing
 #    namespace: default

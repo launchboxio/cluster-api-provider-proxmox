@@ -159,6 +159,29 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 		}
 	}
 
+	// If the user has provided a resource pool, attach the
+	// created VM to the specified pool
+	if m.ProxmoxCluster.Spec.Pool != "" {
+		pool, err := m.ensurePool(m.ProxmoxCluster.Spec.Pool)
+		if err != nil {
+			m.Logger.Error(err, "Failed to ensure VM pool")
+			return ctrl.Result{}, err
+		}
+
+		poolMembers := []string{
+			strconv.FormatUint(uint64(vm.VMID), 10),
+		}
+		for _, member := range pool.Members {
+			poolMembers = append(poolMembers, strconv.FormatUint(member.VMID, 10))
+		}
+		err = pool.Update(&proxmox.PoolUpdateOption{
+			VirtualMachines: strings.Join(poolMembers, ","),
+		})
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
 	// If VM is still showing as initializing, we want to perform further configuration
 	// - Configure network, disks, etc
 	// - Setup cicustom
@@ -547,4 +570,27 @@ func writeFile(credentials *v1.Secret, storagePath string, filePath string, cont
 
 	_, err = dstFile.Write(contents)
 	return err
+}
+
+// ensurePool lists the current pools for the cluster, and if a matching
+// pool is found, returns a handle to it. If its not found, we create a
+// new resource pool, returning that to the caller
+func (m *Machine) ensurePool(poolId string) (*proxmox.Pool, error) {
+	pools, err := m.ProxmoxClient.Pools()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, pool := range pools {
+		if pool.PoolID == poolId {
+			return pool, nil
+		}
+	}
+
+	err = m.ProxmoxClient.NewPool(poolId, m.Cluster.Name)
+	if err != nil {
+		return nil, err
+	}
+
+	return m.ProxmoxClient.Pool(poolId)
 }

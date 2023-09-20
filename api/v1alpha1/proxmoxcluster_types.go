@@ -36,6 +36,9 @@ type ProxmoxClusterSpec struct {
 	CredentialsRef v1.SecretReference `json:"credentialsRef,omitempty"`
 
 	Snippets ProxmoxClusterSnippetsConfig `json:"snippets"`
+	// The Proxmox resource pool to attach created VMs to.
+	// If it doesnt exist, operator will create it first
+	Pool string `json:"pool,omitempty"`
 }
 
 type ProxmoxClusterSnippetsConfig struct {

@@ -62,6 +62,10 @@ spec:
                     type: string
                 type: object
                 x-kubernetes-map-type: atomic
+              pool:
+                description: The Proxmox resource pool to attach created VMs to. If
+                  it doesnt exist, operator will create it first
+                type: string
               snippets:
                 properties:
                   credentials:
