@@ -42,6 +42,8 @@ type ProxmoxClusterSpec struct {
 
 	// Global tags applied to all instances for the cluster
 	Tags []string `json:"tags,omitempty"`
+
+	DeletionProtection BaseComponent `json:"deletionProtection,omitempty"`
 }
 
 type ProxmoxClusterSnippetsConfig struct {
