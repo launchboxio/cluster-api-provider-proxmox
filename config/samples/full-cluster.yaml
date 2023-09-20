@@ -207,6 +207,21 @@ spec:
         - "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDMok8dumPcuErp7ZiKBaCEyY2unIEL98r1E2zRcg//aXZ3+7MB45sloqjHYrDZqn6Q4Ov//7+PxQnvm4AuWY8eWexd32gCGXBGq/+4EQl+tjFDsLmQej5ezEZEWfssgOGgX0TMWR+r7C65AM1EohJpWD2LuJgwqz2SCd9TQdfzRyLHnna3Wo/SKLbA9I84EdgNq9/gnu0+d26Q9kBRASPcKsG46bD6X9ehS6ptd/DSTQmyYucMvmevVA3Z17CJ22UPllfRvdV8IsWM4a3ZvdKgdrIp5a6drhWMIDkZ8AbVWkztY+r2Pn7rZ7efN0mJR/601HMOTRF2ywfcHxb6bE+teKnuhNYT++Po0XD/rR2z5SEi74/uRCv+SMNf3GwMelIYwGxuH34Eh9WoCA6516j3/vBrfqJk0XWlesjFImDYHXk7WblfgkG1obbHLJ2QY7O/VzCSLl29D5OTwZHoazarmBz+x+lsxN2Qg3GEvPkFNJto9R/kWvPvS2OgSnZYabE= robwittman@github/59786197 # ssh-import-id gh:robwittman"
         - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFCLTBbrAHY00VcwXm1KiMcfCOmql06Hjtl0xyk/YrVg robwittman@github/82081183 # ssh-import-id gh:robwittman"
         - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICJqx657ktJzgzKawXJbCkTYOq/2tpvupGxDLo1QosUP robwittman@github/60396273 # ssh-import-id gh:robwittman"
+      networkUserData: |
+        version: 1
+        config:
+          - type: physical
+            name: ens18
+            subnets:
+              - type: dhcp
+          - type: physical
+            name: ens19
+            subnets:
+              - type: dhcp
+          - type: physical
+            name: ens20
+            subnets:
+              - type: dhcp
 
 ---
 apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
@@ -239,3 +254,18 @@ spec:
         - "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDMok8dumPcuErp7ZiKBaCEyY2unIEL98r1E2zRcg//aXZ3+7MB45sloqjHYrDZqn6Q4Ov//7+PxQnvm4AuWY8eWexd32gCGXBGq/+4EQl+tjFDsLmQej5ezEZEWfssgOGgX0TMWR+r7C65AM1EohJpWD2LuJgwqz2SCd9TQdfzRyLHnna3Wo/SKLbA9I84EdgNq9/gnu0+d26Q9kBRASPcKsG46bD6X9ehS6ptd/DSTQmyYucMvmevVA3Z17CJ22UPllfRvdV8IsWM4a3ZvdKgdrIp5a6drhWMIDkZ8AbVWkztY+r2Pn7rZ7efN0mJR/601HMOTRF2ywfcHxb6bE+teKnuhNYT++Po0XD/rR2z5SEi74/uRCv+SMNf3GwMelIYwGxuH34Eh9WoCA6516j3/vBrfqJk0XWlesjFImDYHXk7WblfgkG1obbHLJ2QY7O/VzCSLl29D5OTwZHoazarmBz+x+lsxN2Qg3GEvPkFNJto9R/kWvPvS2OgSnZYabE= robwittman@github/59786197 # ssh-import-id gh:robwittman"
         - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFCLTBbrAHY00VcwXm1KiMcfCOmql06Hjtl0xyk/YrVg robwittman@github/82081183 # ssh-import-id gh:robwittman"
         - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICJqx657ktJzgzKawXJbCkTYOq/2tpvupGxDLo1QosUP robwittman@github/60396273 # ssh-import-id gh:robwittman"
+      networkUserData: |
+        version: 1
+        config:
+          - type: physical
+            name: ens18
+            subnets:
+              - type: dhcp
+          - type: physical
+            name: ens19
+            subnets:
+              - type: dhcp
+          - type: physical
+            name: ens20
+            subnets:
+              - type: dhcp
