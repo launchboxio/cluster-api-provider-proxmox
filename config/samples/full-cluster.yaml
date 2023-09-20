@@ -6,7 +6,11 @@ metadata:
   namespace: default
 spec:
   template:
-    spec: {}
+    spec:
+      preKubeadmCommands:
+        - /init.sh
+      postKubeadmCommands:
+        - /register.sh
 ---
 apiVersion: cluster.x-k8s.io/v1beta1
 kind: Cluster
@@ -62,10 +66,6 @@ metadata:
   namespace: default
 spec:
   kubeadmConfigSpec:
-    preKubeadmCommands:
-      - /init.sh
-    postKubeadmCommands:
-      - /register.sh
     clusterConfiguration:
       apiServer:
         certSANs:
