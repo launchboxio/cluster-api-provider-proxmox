@@ -148,7 +148,7 @@ spec:
       name: testing-control-plane
       namespace: default
   replicas: 3
-  version: v1.25.11
+  version: v1.28.2
 ---
 apiVersion: cluster.x-k8s.io/v1beta1
 kind: MachineDeployment
@@ -175,7 +175,7 @@ spec:
         apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
         kind: ProxmoxMachineTemplate
         name: testing-md-0
-      version: v1.25.11
+      version: v1.28.2
 ---
 apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
 kind: ProxmoxMachineTemplate

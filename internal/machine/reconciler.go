@@ -190,7 +190,7 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 
 		err = generateSnippets(
 			bootstrapSecret,
-			"v1.25.11", // TODO: Pull Kubernetes version from CRD
+			*m.Machine.Spec.Version,
 			credentialsSecret,
 			"/mnt/default/snippets/snippets/",
 			m.ProxmoxMachine,
