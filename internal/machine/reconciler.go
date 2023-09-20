@@ -21,7 +21,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"strconv"
 	"strings"
-	"text/template"
 	"time"
 )
 
@@ -486,11 +485,6 @@ func generateSnippets(
 		return err
 	}
 
-	networkData, err := generateUserNetworkData(proxmoxMachine.Spec.Networks)
-	if err != nil {
-		return err
-	}
-
 	// We now have 2 snippets, let's write them to the storage
 	networkFileName := fmt.Sprintf("%s-%s-network.yaml", proxmoxMachine.Namespace, proxmoxMachine.Name)
 	userFileName := fmt.Sprintf("%s-%s-user.yaml", proxmoxMachine.Namespace, proxmoxMachine.Name)
@@ -498,7 +492,10 @@ func generateSnippets(
 		credentialsSecret,
 		storagePath,
 		networkFileName,
-		networkData,
+		[]byte(fmt.Sprintf(`
+#cloud-config
+%s
+`, proxmoxMachine.Spec.NetworkUserData)),
 	)
 	if err != nil {
 		return err
@@ -550,41 +547,4 @@ func writeFile(credentials *v1.Secret, storagePath string, filePath string, cont
 
 	_, err = dstFile.Write(contents)
 	return err
-}
-
-func generateUserNetworkData(networks []infrastructurev1alpha1.ProxmoxNetwork) ([]byte, error) {
-	tmpl, err := template.New("network").Parse(`
-#cloud-config
-version: 1
-config:
-- type: physical
-  name: ens18
-  subnets:
-    - type: dhcp
-- type: physical
-  name: ens19
-  subnets:
-    - type: dhcp
-- type: physical
-  name: ens20
-  subnets:
-    - type: dhcp
-`)
-	//  {{range $item, $key := .Networks}}
-	//  - type: physical
-	//    name: ens{{ $item }}
-	//    subnets:
-	//      - type: dhcp
-	//  {{end}}
-	if err != nil {
-		return []byte{}, err
-	}
-
-	var buf bytes.Buffer
-	err = tmpl.Execute(&buf, struct {
-		Networks []infrastructurev1alpha1.ProxmoxNetwork
-	}{
-		Networks: networks,
-	})
-	return buf.Bytes(), err
 }
