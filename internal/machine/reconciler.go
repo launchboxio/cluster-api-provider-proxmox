@@ -69,6 +69,12 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 	}
 
 	if m.ProxmoxMachine.Spec.ProviderID == "" {
+		node, err := m.selectNode(nil)
+		if err != nil {
+			m.Logger.Error(err, "Failed selecting node for VM")
+			return ctrl.Result{}, err
+		}
+
 		// Try getting status again to prevent duplication of machines
 		if err := m.Get(ctx, req.NamespacedName, m.ProxmoxMachine); err != nil {
 			m.Logger.Error(err, "Failed to get ProxmoxMachine")
@@ -76,9 +82,11 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 		}
 		// TODO: We need to monitor the task for failure.
 		// TODO: Ocassionally, we are getting "the object has been modified", causing
-		// extra VM instances to be created
+		// extra VM instances to be created //
+
 		vmid, task, err := template.Clone(&proxmox.VirtualMachineCloneOptions{
-			Name: fmt.Sprintf("%s-%s", m.ProxmoxMachine.Namespace, m.ProxmoxMachine.Name),
+			Name:   fmt.Sprintf("%s-%s", m.ProxmoxMachine.Namespace, m.ProxmoxMachine.Name),
+			Target: node.Node,
 		})
 		m.Logger.Info("Creating VM")
 		if err != nil {
@@ -239,31 +247,6 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 			return ctrl.Result{}, err
 		}
 
-		node, err := m.selectNode(nil)
-		if err != nil {
-			m.Logger.Error(err, "Failed selecting node for VM")
-			return ctrl.Result{}, err
-		}
-
-		if vm.Node != node.Node {
-			m.Logger.Info(fmt.Sprintf("Moving VM to node %s", node.Node))
-			task, err := vm.Migrate(node.Node, "")
-			if err != nil {
-				return ctrl.Result{}, err
-			}
-
-			if err = task.Wait(time.Second*5, VmMigrationTimeout); err != nil {
-				m.Logger.Error(err, "Timed out waiting for VM to migrate")
-				return ctrl.Result{}, err
-			}
-
-			// Reload the VM to get the appropriate node
-			vm, err = loadVm(m.ProxmoxClient, vmid)
-			if err != nil {
-				return ctrl.Result{}, err
-			}
-		}
-
 		conditions.MarkFalse(
 			m.ProxmoxMachine, VirtualMachineInitializing, "Completed",
 			v1beta1.ConditionSeverityNone, "VM initialization completed")
@@ -350,6 +333,11 @@ func (m *Machine) reconcileDelete(ctx context.Context, req ctrl.Request) (ctrl.R
 			if err != nil {
 				m.Logger.Error(err, "Failed unlinking disk")
 				return ctrl.Result{}, err
+			}
+			if task == nil {
+				m.Logger.Info("Task was nil when unlinking disk. Queuing for cleanup again")
+				// Unknown issue when unlinking disks. Requeue and try again?
+				return ctrl.Result{Requeue: true}, nil
 			}
 			if err = task.Wait(time.Second*5, VmStopTimeout); err != nil {
 				m.Logger.Error(err, "Timeout exceeded waiting for disk removal")
