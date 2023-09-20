@@ -21,6 +21,8 @@ import (
 	"crypto/tls"
 	"fmt"
 	"github.com/luthermonson/go-proxmox"
+	"k8s.io/client-go/tools/record"
+
 	//"k8s.io/apimachinery/pkg/types"
 	"net/http"
 	"sigs.k8s.io/cluster-api/util"
@@ -41,7 +43,8 @@ import (
 // ProxmoxMachineReconciler reconciles a ProxmoxMachine object
 type ProxmoxMachineReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
 }
 
 //+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=proxmoxmachines,verbs=get;list;watch;create;update;patch;delete
@@ -134,6 +137,7 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		ProxmoxCluster: proxmoxCluster,
 		Logger:         contextLogger,
 		Client:         r.Client,
+		Recorder:       r.Recorder,
 	}
 
 	return machineReconciler.Reconcile(ctx, req)

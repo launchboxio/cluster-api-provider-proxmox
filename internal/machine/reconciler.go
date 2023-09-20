@@ -91,6 +91,7 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 		m.Logger.Info("Creating VM")
 		if err != nil {
 			m.Logger.Error(err, "Failed creating VM")
+			m.Recorder.Event(m.ProxmoxMachine, v1.EventTypeWarning, err.Error(), "Failed creating VM")
 			return ctrl.Result{}, err
 		}
 
@@ -100,6 +101,8 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 			m.Logger.Error(err, "Failed updating ProxmoxMachine status")
 			return ctrl.Result{}, err
 		}
+
+		m.Recorder.Event(m.ProxmoxMachine, "Normal", "", "Created VM with Provider ID "+m.ProxmoxMachine.Spec.ProviderID)
 
 		m.ProxmoxMachine.Status.Vmid = vmid
 		conditions.MarkTrue(m.ProxmoxMachine, VirtualMachineInitializing)
@@ -174,6 +177,7 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 	if m.ProxmoxCluster.Spec.Pool != "" {
 		pool, err := m.ensurePool(m.ProxmoxCluster.Spec.Pool)
 		if err != nil {
+			m.Recorder.Event(m.ProxmoxMachine, v1.EventTypeWarning, "", fmt.Sprintf("Failed getting Resource Pool: %v", err))
 			m.Logger.Error(err, "Failed to ensure VM pool")
 			return ctrl.Result{}, err
 		}
@@ -192,6 +196,7 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 			if err != nil {
 				return ctrl.Result{}, err
 			}
+			m.Recorder.Event(m.ProxmoxMachine, "Normal", "", "Added to resource pool "+pool.PoolID)
 		}
 	}
 
@@ -243,6 +248,7 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 		}
 
 		if err = task.Wait(time.Second*5, VmConfigurationTimeout); err != nil {
+			m.Recorder.Event(m.ProxmoxMachine, v1.EventTypeWarning, err.Error(), "VM Configuration timeout")
 			m.Logger.Error(err, "Timed out waiting for VM to finish configuring")
 			return ctrl.Result{}, err
 		}
@@ -257,6 +263,7 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 			return ctrl.Result{}, err
 		}
 
+		m.Recorder.Event(m.ProxmoxMachine, "Normal", "", "Starting machine")
 		task, err = vm.Start()
 		if err != nil {
 			m.Logger.Error(err, "Failed starting VM")
@@ -264,10 +271,12 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 		}
 
 		if err = task.Wait(time.Second*5, VmStartTimeout); err != nil {
+			m.Recorder.Event(m.ProxmoxMachine, v1.EventTypeWarning, err.Error(), "VM Start timeout")
 			m.Logger.Error(err, "Timed out waiting for VM to start")
 			return ctrl.Result{}, err
 		}
 
+		m.Recorder.Event(m.ProxmoxMachine, v1.EventTypeNormal, "", "Machine started")
 		return ctrl.Result{}, nil
 	}
 
@@ -313,6 +322,7 @@ func (m *Machine) reconcileDelete(ctx context.Context, req ctrl.Request) (ctrl.R
 
 	// First, we stop the VM
 	if vm.Status == "running" {
+		m.Recorder.Event(m.ProxmoxMachine, v1.EventTypeNormal, "", "Stopping VM")
 		task, err := vm.Stop()
 		if err != nil {
 			return ctrl.Result{}, err
@@ -320,11 +330,13 @@ func (m *Machine) reconcileDelete(ctx context.Context, req ctrl.Request) (ctrl.R
 		if err = task.Wait(time.Second*5, VmStopTimeout); err != nil {
 			return ctrl.Result{}, err
 		}
+
 	}
 
 	disks := vm.VirtualMachineConfig.MergeIDEs()
 	for disk, mount := range disks {
 		if strings.Contains(mount, "cloudinit") {
+			m.Recorder.Event(m.ProxmoxMachine, v1.EventTypeNormal, "", "Unlinking Disk "+disk)
 			m.Logger.Info("Unlinking disk", "Disk", disk)
 			task, err := vm.UnlinkDisk(disk, true)
 			// Unexpectedly, this does throw an error. However, it does
@@ -346,6 +358,7 @@ func (m *Machine) reconcileDelete(ctx context.Context, req ctrl.Request) (ctrl.R
 		}
 	}
 
+	m.Recorder.Event(m.ProxmoxMachine, v1.EventTypeNormal, "", "Deleting VM")
 	task, err := vm.Delete()
 	if err != nil {
 		return ctrl.Result{}, err
