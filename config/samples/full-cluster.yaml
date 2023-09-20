@@ -9,8 +9,6 @@ spec:
     spec:
       preKubeadmCommands:
         - /init.sh
-      postKubeadmCommands:
-        - /register.sh
 ---
 apiVersion: cluster.x-k8s.io/v1beta1
 kind: Cluster
