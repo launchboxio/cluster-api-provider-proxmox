@@ -243,8 +243,9 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 
 		task, err := vm.Config(vmInitializationOptions(m.ProxmoxCluster, m.ProxmoxMachine)...)
 		if err != nil {
+			m.Recorder.Event(m.ProxmoxMachine, v1.EventTypeWarning, err.Error(), "VM Configuration failure")
 			m.Logger.Error(err, "Failed to reconfigure VM")
-			return ctrl.Result{}, err
+			return ctrl.Result{Requeue: false}, err
 		}
 
 		if err = task.Wait(time.Second*5, VmConfigurationTimeout); err != nil {
@@ -440,6 +441,7 @@ func vmInitializationOptions(cluster *infrastructurev1alpha1.ProxmoxCluster, mac
 				machine.Namespace, machine.Name,
 			),
 		}, ",")},
+		{Name: "agent", Value: 1},
 	}
 
 	for idx, network := range machine.Spec.Networks {
