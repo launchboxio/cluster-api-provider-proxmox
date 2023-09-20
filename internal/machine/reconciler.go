@@ -212,9 +212,15 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 			return ctrl.Result{}, err
 		}
 
-		if m.ProxmoxMachine.Spec.TargetNode != "" && vm.Node != m.ProxmoxMachine.Spec.TargetNode {
-			m.Logger.Info(fmt.Sprintf("Moving VM to node %s", m.ProxmoxMachine.Spec.TargetNode))
-			task, err := vm.Migrate(m.ProxmoxMachine.Spec.TargetNode, "")
+		node, err := m.selectNode(nil)
+		if err != nil {
+			m.Logger.Error(err, "Failed selecting node for VM")
+			return ctrl.Result{}, err
+		}
+
+		if vm.Node != node.Node {
+			m.Logger.Info(fmt.Sprintf("Moving VM to node %s", node.Node))
+			task, err := vm.Migrate(node.Node, "")
 			if err != nil {
 				return ctrl.Result{}, err
 			}
