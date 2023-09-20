@@ -148,7 +148,7 @@ spec:
       name: testing-control-plane
       namespace: default
   replicas: 3
-  version: v1.28.2
+  version: v1.28.1
 ---
 apiVersion: cluster.x-k8s.io/v1beta1
 kind: MachineDeployment
@@ -175,7 +175,7 @@ spec:
         apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
         kind: ProxmoxMachineTemplate
         name: testing-md-0
-      version: v1.28.2
+      version: v1.28.1
 ---
 apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
 kind: ProxmoxMachineTemplate
@@ -185,7 +185,6 @@ metadata:
 spec:
   template:
     spec:
-      targetNode: aphrodite
       template: "VM 9001"
       resources:
         memory: 4096
@@ -218,7 +217,6 @@ metadata:
 spec:
   template:
     spec:
-      targetNode: aphrodite
       template: "VM 9001"
       resources:
         memory: 4096
