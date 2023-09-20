@@ -14,6 +14,7 @@ import (
 	goyaml "gopkg.in/yaml.v3"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/strings/slices"
 	"sigs.k8s.io/cluster-api/api/v1beta1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util/conditions"
@@ -155,6 +156,32 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 			_, err := vm.AddTag(tag)
 			if err != nil {
 				m.Logger.Error(err, "Failed adding tag to VM")
+			}
+		}
+	}
+
+	// If the user has provided a resource pool, attach the
+	// created VM to the specified pool
+	if m.ProxmoxCluster.Spec.Pool != "" {
+		pool, err := m.ensurePool(m.ProxmoxCluster.Spec.Pool)
+		if err != nil {
+			m.Logger.Error(err, "Failed to ensure VM pool")
+			return ctrl.Result{}, err
+		}
+
+		poolMembers := []string{}
+		for _, member := range pool.Members {
+			poolMembers = append(poolMembers, strconv.FormatUint(member.VMID, 10))
+		}
+
+		memberId := strconv.FormatUint(uint64(vm.VMID), 10)
+		if !slices.Contains(poolMembers, memberId) {
+			poolMembers = append(poolMembers, memberId)
+			err = pool.Update(&proxmox.PoolUpdateOption{
+				VirtualMachines: memberId,
+			})
+			if err != nil {
+				return ctrl.Result{}, err
 			}
 		}
 	}
@@ -547,4 +574,21 @@ func writeFile(credentials *v1.Secret, storagePath string, filePath string, cont
 
 	_, err = dstFile.Write(contents)
 	return err
+}
+
+// ensurePool lists the current pools for the cluster, and if a matching
+// pool is found, returns a handle to it. If its not found, we create a
+// new resource pool, returning that to the caller
+func (m *Machine) ensurePool(poolId string) (*proxmox.Pool, error) {
+	pool, err := m.ProxmoxClient.Pool(poolId)
+	if err != nil {
+		fmt.Println(err)
+		err = m.ProxmoxClient.NewPool(poolId, m.Cluster.Name)
+		if err != nil {
+			return nil, err
+		}
+
+		return m.ProxmoxClient.Pool(poolId)
+	}
+	return pool, nil
 }
