@@ -78,6 +78,11 @@ spec:
                 - credentials
                 - storageUri
                 type: object
+              tags:
+                description: Global tags applied to all instances for the cluster
+                items:
+                  type: string
+                type: array
             required:
             - controlPlaneEndpoint
             - snippets

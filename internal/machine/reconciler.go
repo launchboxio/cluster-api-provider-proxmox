@@ -151,7 +151,8 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 	}
 
 	// Attach tags
-	for _, tag := range m.ProxmoxMachine.Spec.Tags {
+	tags := append(m.ProxmoxMachine.Spec.Tags, m.ProxmoxCluster.Spec.Tags...)
+	for _, tag := range tags {
 		if !vm.HasTag(tag) {
 			_, err := vm.AddTag(tag)
 			if err != nil {
