@@ -4,6 +4,7 @@ import (
 	"github.com/go-logr/logr"
 	infrastructurev1alpha1 "github.com/launchboxio/cluster-api-provider-proxmox/api/v1alpha1"
 	"github.com/luthermonson/go-proxmox"
+	"k8s.io/client-go/tools/record"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -17,6 +18,7 @@ type Machine struct {
 	ProxmoxCluster *infrastructurev1alpha1.ProxmoxCluster
 	Logger         logr.Logger
 	client.Client
+	Recorder record.EventRecorder
 }
 
 type BootstrapSecretFile struct {
