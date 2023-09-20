@@ -102,7 +102,7 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 			return ctrl.Result{}, err
 		}
 
-		m.Recorder.Event(m.ProxmoxMachine, "Normal", "", "Created VM with Provider ID "+m.ProxmoxMachine.Spec.ProviderID)
+		m.Recorder.Event(m.ProxmoxMachine, v1.EventTypeNormal, "", "Created VM with Provider ID "+m.ProxmoxMachine.Spec.ProviderID)
 
 		m.ProxmoxMachine.Status.Vmid = vmid
 		conditions.MarkTrue(m.ProxmoxMachine, VirtualMachineInitializing)
@@ -177,7 +177,7 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 	if m.ProxmoxCluster.Spec.Pool != "" {
 		pool, err := m.ensurePool(m.ProxmoxCluster.Spec.Pool)
 		if err != nil {
-			m.Recorder.Event(m.ProxmoxMachine, v1.EventTypeWarning, "", fmt.Sprintf("Failed getting Resource Pool: %v", err))
+			m.Recorder.Event(m.ProxmoxMachine, v1.EventTypeWarning, err.Error(), "Failed getting Resource Pool: %v")
 			m.Logger.Error(err, "Failed to ensure VM pool")
 			return ctrl.Result{}, err
 		}
