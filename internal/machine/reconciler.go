@@ -29,6 +29,12 @@ const (
 	machineFinalizer           = "infrastructure.cluster.x-k8s.io/finalizer"
 	ProviderIDPrefix           = "proxmox://"
 	VirtualMachineInitializing = "VirtualMachineInitializing"
+
+	VmConfigurationTimeout = time.Minute * 10
+	VmMigrationTimeout     = time.Minute * 10
+	VmStartTimeout         = time.Minute * 10
+	VmStopTimeout          = time.Minute * 10
+	VmDeleteTimeout        = time.Minute * 10
 )
 
 // TODO: Remove a requirement for Cluster setup. Folks should be able
@@ -201,7 +207,7 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 			return ctrl.Result{}, err
 		}
 
-		if err = task.Wait(time.Second*5, time.Minute*10); err != nil {
+		if err = task.Wait(time.Second*5, VmConfigurationTimeout); err != nil {
 			m.Logger.Error(err, "Timed out waiting for VM to finish configuring")
 			return ctrl.Result{}, err
 		}
@@ -213,7 +219,7 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 				return ctrl.Result{}, err
 			}
 
-			if err = task.Wait(time.Second*5, time.Minute*10); err != nil {
+			if err = task.Wait(time.Second*5, VmMigrationTimeout); err != nil {
 				m.Logger.Error(err, "Timed out waiting for VM to migrate")
 				return ctrl.Result{}, err
 			}
@@ -241,7 +247,7 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 			return ctrl.Result{}, err
 		}
 
-		if err = task.Wait(time.Second*5, time.Minute*10); err != nil {
+		if err = task.Wait(time.Second*5, VmStartTimeout); err != nil {
 			m.Logger.Error(err, "Timed out waiting for VM to start")
 			return ctrl.Result{}, err
 		}
@@ -273,6 +279,7 @@ func (m *Machine) reconcileDelete(ctx context.Context, req ctrl.Request) (ctrl.R
 	)
 	if err != nil {
 		m.Logger.Error(err, "Failed parsing provider ID")
+		return ctrl.Result{}, err
 	}
 	vm, err := loadVm(m.ProxmoxClient, vmid)
 	if err != nil {
@@ -288,15 +295,47 @@ func (m *Machine) reconcileDelete(ctx context.Context, req ctrl.Request) (ctrl.R
 	// TODO: We also need to cleanup the cloudinit volume. For some reason
 	// deleting a VM sometimes doesnt remove the cloudinit volume
 
-	err = remove(vm)
+	// First, we stop the VM
+	if vm.Status == "running" {
+		task, err := vm.Stop()
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if err = task.Wait(time.Second*5, VmStopTimeout); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	disks := vm.VirtualMachineConfig.MergeIDEs()
+	for disk, mount := range disks {
+		if strings.Contains(mount, "cloudinit") {
+			m.Logger.Info("Unlinking disk", "Disk", disk)
+			task, err := vm.UnlinkDisk(disk, true)
+			// Unexpectedly, this does throw an error. However, it does
+			// allow the volume to be cleaned up when the instance
+			// is terminated. For now, that's acceptable enough
+			if err != nil {
+				m.Logger.Error(err, "Failed unlinking disk")
+				return ctrl.Result{}, err
+			}
+			if err = task.Wait(time.Second*5, VmStopTimeout); err != nil {
+				m.Logger.Error(err, "Timeout exceeded waiting for disk removal")
+				return ctrl.Result{}, err
+			}
+		}
+	}
+
+	task, err := vm.Delete()
 	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if err = task.Wait(time.Second*5, VmDeleteTimeout); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	controllerutil.RemoveFinalizer(m.ProxmoxMachine, machineFinalizer)
 	err = m.Update(context.TODO(), m.ProxmoxMachine)
 	return ctrl.Result{}, err
-
 }
 
 func loadVm(px *proxmox.Client, vmid int) (*proxmox.VirtualMachine, error) {
@@ -327,28 +366,6 @@ func loadVm(px *proxmox.Client, vmid int) (*proxmox.VirtualMachine, error) {
 	}
 
 	return node.VirtualMachine(int(vmTemplate.VMID))
-}
-
-func remove(vm *proxmox.VirtualMachine) error {
-	task, err := vm.Stop()
-	if err != nil {
-		return err
-	}
-	if err = task.Wait(time.Second*5, time.Minute*10); err != nil {
-		return err
-	}
-
-	// Sleep for 10 seconds. This ensures that the volume has been released?
-	time.Sleep(time.Second * 10)
-
-	task, err = vm.Delete()
-	if err != nil {
-		return err
-	}
-	if err = task.Wait(time.Second*5, time.Minute*10); err != nil {
-		return err
-	}
-	return nil
 }
 
 func getVmTemplate(px *proxmox.Client, templateName string) (*proxmox.ClusterResource, error) {
