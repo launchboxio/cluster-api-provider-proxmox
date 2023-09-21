@@ -3,6 +3,8 @@
 <p align="left">
   <!-- Go version -->
   <img src="https://img.shields.io/github/go-mod/go-version/launchboxio/cluster-api-provider-proxmox" />
+  <!-- Latest release -->
+  <img src="https://img.shields.io/github/v/release/launchboxio/cluster-api-provider-proxmox" />
   <!-- Release Date -->
   <img src="https://img.shields.io/github/release-date/launchboxio/cluster-api-provider-proxmox" />
   <!-- License -->
