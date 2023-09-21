@@ -6,7 +6,9 @@ metadata:
   namespace: default
 spec:
   template:
-    spec: {}
+    spec:
+      preKubeadmCommands:
+        - /init.sh
 ---
 apiVersion: cluster.x-k8s.io/v1beta1
 kind: Cluster
