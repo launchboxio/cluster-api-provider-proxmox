@@ -372,7 +372,6 @@ func (m *Machine) attachNode(ctx context.Context) (ctrl.Result, error) {
 	if len(patches) > 0 {
 		payloadBytes, _ := json.Marshal(patches)
 
-		fmt.Println(string(payloadBytes))
 		_, err = client.
 			CoreV1().
 			Nodes().
@@ -676,7 +675,6 @@ func writeFile(credentials *v1.Secret, storagePath string, filePath string, cont
 func (m *Machine) ensurePool(poolId string) (*proxmox.Pool, error) {
 	pool, err := m.ProxmoxClient.Pool(poolId)
 	if err != nil {
-		fmt.Println(err)
 		err = m.ProxmoxClient.NewPool(poolId, m.Cluster.Name)
 		if err != nil {
 			return nil, err
