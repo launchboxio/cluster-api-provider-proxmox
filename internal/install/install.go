@@ -58,21 +58,3 @@ apt-mark hold kubelet kubeadm kubectl
 
 swapoff -a && sed -ri '/\sswap\s/s/^#?/#/' /etc/fstab
 `))
-
-type RegisterNodeScriptArgs struct {
-	NodeName   string
-	Machine    string
-	ProviderId string
-}
-
-var RegisterNodeScript = template.Must(template.New("register").Parse(`
-#!/usr/bin/env bash
-
-NODE_NAME="{{ .NodeName }}"
-MACHINE="{{ .Machine }}"
-PROVIDER_ID="{{ .ProviderId }}"
-
-export KUBECONFIG=/etc/kubernetes/admin.conf
-kubectl annotate node $NODE_NAME "cluster.x-k8s.io=$MACHINE"
-kubectl patch node $NODE_NAME -p "{\"spec\":{\"providerID\":\"$PROVIDER_ID\"}}"
-`))

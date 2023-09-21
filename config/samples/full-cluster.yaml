@@ -9,8 +9,6 @@ spec:
     spec:
       preKubeadmCommands:
         - /init.sh
-      postKubeadmCommands:
-        - /register.sh
 ---
 apiVersion: cluster.x-k8s.io/v1beta1
 kind: Cluster
@@ -66,6 +64,8 @@ metadata:
   namespace: default
 spec:
   kubeadmConfigSpec:
+    preKubeadmCommands:
+      - /init.sh
     clusterConfiguration:
       apiServer:
         certSANs:
@@ -160,7 +160,7 @@ metadata:
   namespace: default
 spec:
   clusterName: testing
-  replicas: 1
+  replicas: 3
   selector:
     matchLabels: null
   template:

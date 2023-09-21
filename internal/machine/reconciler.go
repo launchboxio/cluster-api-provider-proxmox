@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	infrastructurev1alpha1 "github.com/launchboxio/cluster-api-provider-proxmox/api/v1alpha1"
 	"github.com/launchboxio/cluster-api-provider-proxmox/internal/install"
@@ -13,7 +14,10 @@ import (
 	"gopkg.in/yaml.v2"
 	goyaml "gopkg.in/yaml.v3"
 	v1 "k8s.io/api/core/v1"
+	v12 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/utils/strings/slices"
 	"sigs.k8s.io/cluster-api/api/v1beta1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
@@ -294,6 +298,89 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{}, nil
 	}
 
+	// Lastly, wait for our node to get the registered providerID. Once it does,
+	// we find the node and annotate it with the machine ID
+	if m.Machine.Status.NodeRef == nil {
+		// Attempt to attach node until successful
+		// We probably shouldnt endlessly retry this,
+		// TODO: Find a better method to notice when the node is ready
+		_, err := m.attachNode(ctx)
+		if err != nil {
+			return ctrl.Result{RequeueAfter: time.Second * 15}, nil
+		}
+		return ctrl.Result{}, nil
+	}
+
+	return ctrl.Result{}, nil
+}
+
+func (m *Machine) getRESTClient(clusterName string) (*kubernetes.Clientset, error) {
+	secret := &v1.Secret{}
+	err := m.Get(context.TODO(), types.NamespacedName{
+		Namespace: m.Cluster.Namespace,
+		Name:      fmt.Sprintf("%s-kubeconfig", clusterName),
+	}, secret)
+	if err != nil {
+		return nil, err
+	}
+	config, err := clientcmd.RESTConfigFromKubeConfig(secret.Data["value"])
+	if err != nil {
+		return nil, err
+	}
+	return kubernetes.NewForConfig(config)
+}
+
+func (m *Machine) attachNode(ctx context.Context) (ctrl.Result, error) {
+	client, err := m.getRESTClient(m.Cluster.Name)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	nodeName := fmt.Sprintf("%s-%s", m.ProxmoxMachine.Namespace, m.ProxmoxMachine.Name)
+	node, err := client.
+		CoreV1().
+		Nodes().
+		Get(ctx, nodeName, v12.GetOptions{})
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	type Patch struct {
+		Op    string `json:"op"`
+		Path  string `json:"path"`
+		Value string `json:"value"`
+	}
+
+	var patches []Patch
+
+	if node.Spec.ProviderID != m.ProxmoxMachine.Spec.ProviderID {
+		patches = append(patches, Patch{
+			Op:    "add",
+			Path:  "/spec/providerID",
+			Value: m.ProxmoxMachine.Spec.ProviderID,
+		})
+	}
+
+	if _, ok := node.ObjectMeta.Annotations["cluster.x-k8s.io"]; !ok {
+		patches = append(patches, Patch{
+			Op:    "add",
+			Path:  "/metadata/annotations/cluster.x-k8s.io",
+			Value: m.Machine.Name,
+		})
+	}
+
+	if len(patches) > 0 {
+		payloadBytes, _ := json.Marshal(patches)
+
+		_, err = client.
+			CoreV1().
+			Nodes().
+			Patch(ctx, node.Name, types.JSONPatchType, payloadBytes, v12.PatchOptions{})
+		if err != nil {
+			m.Recorder.Event(m.ProxmoxMachine, v1.EventTypeWarning, err.Error(), "Failed attaching node to machine")
+			return ctrl.Result{}, err
+		}
+	}
 	return ctrl.Result{}, nil
 }
 
@@ -457,6 +544,8 @@ func vmInitializationOptions(cluster *infrastructurev1alpha1.ProxmoxCluster, mac
 	return options
 }
 
+// https://kubernetes.io/docs/reference/config-api/kubelet-config.v1beta1/
+// providerID: proxmoxMachine.Spec.ProviderID
 func generateSnippets(
 	secret *v1.Secret,
 	version string,
@@ -477,12 +566,6 @@ func generateSnippets(
 		Hostname:          hostname,
 		KubernetesVersion: strings.Trim(version, "v"),
 	})
-	var registerScript bytes.Buffer
-	err = install.RegisterNodeScript.Execute(&registerScript, install.RegisterNodeScriptArgs{
-		NodeName:   hostname,
-		Machine:    machine.Name,
-		ProviderId: proxmoxMachine.Spec.ProviderID,
-	})
 	bootstrapSecret.Write_Files = append(
 		bootstrapSecret.Write_Files,
 		BootstrapSecretFile{
@@ -490,13 +573,6 @@ func generateSnippets(
 			Permissions: "0755",
 			Owner:       "root:root",
 			Content:     base64.StdEncoding.EncodeToString(packageInstall.Bytes()),
-			Encoding:    "b64",
-		},
-		BootstrapSecretFile{
-			Path:        "/register.sh",
-			Permissions: "0755",
-			Owner:       "root:root",
-			Content:     base64.StdEncoding.EncodeToString(registerScript.Bytes()),
 			Encoding:    "b64",
 		},
 	)
@@ -586,7 +662,6 @@ func writeFile(credentials *v1.Secret, storagePath string, filePath string, cont
 func (m *Machine) ensurePool(poolId string) (*proxmox.Pool, error) {
 	pool, err := m.ProxmoxClient.Pool(poolId)
 	if err != nil {
-		fmt.Println(err)
 		err = m.ProxmoxClient.NewPool(poolId, m.Cluster.Name)
 		if err != nil {
 			return nil, err
