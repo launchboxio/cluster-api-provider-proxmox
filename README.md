@@ -1,13 +1,26 @@
-# Proxmox Cluster API Provider 
+# Kubernetes Cluster API Provider Proxmox (CAPP)
 
-## Requirements 
-- S3-compliant storage for snippets
-- A pre-generated template for the required Kubernetes version
+<p align="left">
+  <!-- Go version -->
+  <img src="https://img.shields.io/github/go-mod/go-version/launchboxio/cluster-api-provider-proxmox" />
+  <!-- Release Date -->
+  <img src="https://img.shields.io/github/release-date/launchboxio/cluster-api-provider-proxmox" />
+  <!-- License -->
+  <img src="https://img.shields.io/github/license/launchboxio/cluster-api-provider-proxmox" />
+</p>
 
 
-### Benchmarks
+------
 
-When creating an image from a base cloud image (having to run init scripts)
-- 45 seconds from creation to VM start
-- 5m15s to kubeadm init
-- 6m50s until kubeadm reported as ready
+## What is Cluster API Provider Proxmox
+
+[Cluster API](https://github.com/kubernetes-sigs/cluster-api) brings
+declarative, Kubernetes-style APIs to cluster creation, configuration and
+management.
+
+[Proxmox](https://www.proxmox.com/en/) is an open source hypervisor for launching
+QEMU VMs and LXC containers
+
+The Cluster API Provider Proxmox allows a Proxmox host / cluster to respond to the 
+infrastructure requests from Cluster API configurations.
+
