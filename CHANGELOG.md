@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+### [0.0.4](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.0.3...v0.0.4) (2023-09-21)
+
+
+### Bug Fixes
+
+* **ci:** Fix image metadata ([36232f7](https://github.com/launchboxio/cluster-api-provider-proxmox/commit/36232f764f2f2bf2dc40c4e2755e78ac2f5db3c1))
+
 ### [0.0.3](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.0.2...v0.0.3) (2023-09-21)
 
 
