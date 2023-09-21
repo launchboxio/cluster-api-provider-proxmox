@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+### [0.0.8](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.0.7...v0.0.8) (2023-09-21)
+
+
+### Bug Fixes
+
+* **ci:** Publish metadata.yaml as well ([6701664](https://github.com/launchboxio/cluster-api-provider-proxmox/commit/6701664a60ea2c580ca004352de0e0af2a83c05b))
+
 ### [0.0.7](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.0.6...v0.0.7) (2023-09-21)
 
 
