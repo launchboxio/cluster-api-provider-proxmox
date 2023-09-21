@@ -8,19 +8,26 @@ on:
 jobs:
   semantic_release:
     runs-on: ubuntu-22.04
+    if: github.repository_owner == 'launchboxio'
     steps:
       - name: Checkout
         uses: actions/checkout@v3
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Semantic Release
         uses: cycjimmy/semantic-release-action@v4
         with:
+          semantic_version: 18.0.0
           extra_plugins: |
             @semantic-release/changelog@6.0.0
             @semantic-release/git
+          branches: |
+            [
+              '+([0-9])?(.{+([0-9]),x}).x',
+              'main',
+            ]
 
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.SEMANTIC_RELEASE_TOKEN }}
