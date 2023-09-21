@@ -1,15 +1,21 @@
-name: Release
+name: Docker
 
 on:
   release:
     types:
       - published
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
 
 jobs:
   # Build and deploy the helm chart
   # Build and deploy the operator manifests
   # Publish our docker image
-  docker:
+  publish:
     name: Build Docker image
     runs-on: ubuntu-22.04
     steps:
