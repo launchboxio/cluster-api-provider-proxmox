@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: Build
-        run: make infra-yaml
+        run: make infra-yaml VERSION=${{ github.ref }}
       - name: Metadata
         run: cp metadata.yaml _dist/
       - name: Upload infrastructure-components
