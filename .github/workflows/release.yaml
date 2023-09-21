@@ -1,0 +1,11 @@
+name: Release
+
+on:
+  release:
+    types:
+      - published
+
+jobs: {}
+  # Build and deploy the helm chart
+  # Build and deploy the operator manifests
+  # Publish our docker image
