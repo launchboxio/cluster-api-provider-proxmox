@@ -566,12 +566,6 @@ func generateSnippets(
 		Hostname:          hostname,
 		KubernetesVersion: strings.Trim(version, "v"),
 	})
-	//var registerScript bytes.Buffer
-	//err = install.RegisterNodeScript.Execute(&registerScript, install.RegisterNodeScriptArgs{
-	//	NodeName:   hostname,
-	//	Machine:    machine.Name,
-	//	ProviderId: proxmoxMachine.Spec.ProviderID,
-	//})
 	bootstrapSecret.Write_Files = append(
 		bootstrapSecret.Write_Files,
 		BootstrapSecretFile{
@@ -581,13 +575,6 @@ func generateSnippets(
 			Content:     base64.StdEncoding.EncodeToString(packageInstall.Bytes()),
 			Encoding:    "b64",
 		},
-		//BootstrapSecretFile{
-		//	Path:        "/register.sh",
-		//	Permissions: "0755",
-		//	Owner:       "root:root",
-		//	Content:     base64.StdEncoding.EncodeToString(registerScript.Bytes()),
-		//	Encoding:    "b64",
-		//},
 	)
 
 	if len(proxmoxMachine.Spec.SshKeys) > 0 {
