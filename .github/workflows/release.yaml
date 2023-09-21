@@ -1,0 +1,23 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+
+jobs:
+  infrastructure:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Build
+        run: make infra-yaml
+      - name: Upload infrastructure-components
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: _dist/infrastructure-components.yaml
+          asset_name: infrastructure-components.yaml
+          tag: ${{ github.ref }}

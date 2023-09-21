@@ -3,8 +3,8 @@
 # To re-generate a bundle for another specific version without changing the standard setup, you can:
 # - use the VERSION as arg of the bundle target (e.g make bundle VERSION=0.0.2)
 # - use environment variables to overwrite this value (e.g export VERSION=0.0.2)
-VERSION ?= 0.0.1
-
+VERSION ?= 1.0.0
+RELEASE_DIR := _dist
 # CHANNELS define the bundle channels used in the bundle.
 # Add a new line here if you would like to change its default config. (E.g CHANNELS = "candidate,fast,stable")
 # To re-generate a bundle for other specific channels without changing the standard setup, you can:
@@ -279,3 +279,12 @@ catalog-build: opm ## Build a catalog image.
 .PHONY: catalog-push
 catalog-push: ## Push a catalog image.
 	$(MAKE) docker-push IMG=$(CATALOG_IMG)
+
+$(RELEASE_DIR):
+	rm -rf $(RELEASE_DIR)
+	mkdir -p $(RELEASE_DIR)
+
+infra-yaml:kustomize $(RELEASE_DIR) # Generate infrastructure-components.yaml
+	#cd config/manager && $(KUSTOMIZE) edit set image
+	cd config/manager && $(KUSTOMIZE) edit set image controller=ghcr.io/launchboxio/cluster-api-provider-proxmox:$(VERSION)
+	$(KUSTOMIZE) build config/default > $(RELEASE_DIR)/infrastructure-components.yaml
