@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+### [0.0.6](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.0.5...v0.0.6) (2023-09-21)
+
+
+### Bug Fixes
+
+* **ci:** Build infrastructure components ([aaab644](https://github.com/launchboxio/cluster-api-provider-proxmox/commit/aaab64479f90465ebcac90d92dcb27e2250daf0b))
+
 ### [0.0.5](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.0.4...v0.0.5) (2023-09-21)
 
 
