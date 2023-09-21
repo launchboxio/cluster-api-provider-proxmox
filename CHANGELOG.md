@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+### [0.0.7](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.0.6...v0.0.7) (2023-09-21)
+
+
+### Bug Fixes
+
+* **ci:** Run make infra-yaml on release events ([7251e0a](https://github.com/launchboxio/cluster-api-provider-proxmox/commit/7251e0af54e68373b0b1f06b674378afeb06fa40))
+
 ### [0.0.6](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.0.5...v0.0.6) (2023-09-21)
 
 
