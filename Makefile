@@ -285,6 +285,5 @@ $(RELEASE_DIR):
 	mkdir -p $(RELEASE_DIR)
 
 infra-yaml:kustomize $(RELEASE_DIR) # Generate infrastructure-components.yaml
-	#cd config/manager && $(KUSTOMIZE) edit set image
 	cd config/manager && $(KUSTOMIZE) edit set image controller=ghcr.io/launchboxio/cluster-api-provider-proxmox:$(VERSION)
 	$(KUSTOMIZE) build config/default > $(RELEASE_DIR)/infrastructure-components.yaml
