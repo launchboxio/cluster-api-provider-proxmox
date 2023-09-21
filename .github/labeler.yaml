@@ -1,0 +1,17 @@
+area/docs:
+  - "docs/**/*"
+  - "**/*.md"
+
+area/apis:
+  - "apis/*"
+  - "apis/**/*"
+
+area:
+  - "apis"
+  - "docs"
+
+kind:
+  - "bug"
+  - "feature"
+  - "cleanup"
+  - "docs"
