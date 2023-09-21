@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+### [0.0.5](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.0.4...v0.0.5) (2023-09-21)
+
+
+### Bug Fixes
+
+* **ci:** Remove 1.0.0 version, fix docker build ([1153394](https://github.com/launchboxio/cluster-api-provider-proxmox/commit/1153394d8ec8aed4c664542eb443f189aa2096ff))
+
 ### [0.0.4](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.0.3...v0.0.4) (2023-09-21)
 
 
