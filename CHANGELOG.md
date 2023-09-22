@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.1.1...v0.2.0) (2023-09-22)
+
+
+### Features
+
+* **revert:** Were not ready to mount storage yet ([1b13070](https://github.com/launchboxio/cluster-api-provider-proxmox/commit/1b130701e854de0c99d04e1aa2edf8327fbe8279))
+
 ### [0.1.1](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.1.0...v0.1.1) (2023-09-22)
 
 
