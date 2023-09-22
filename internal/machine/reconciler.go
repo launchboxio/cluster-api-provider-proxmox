@@ -8,9 +8,9 @@ import (
 	"fmt"
 	infrastructurev1alpha1 "github.com/launchboxio/cluster-api-provider-proxmox/api/v1alpha1"
 	"github.com/launchboxio/cluster-api-provider-proxmox/internal/install"
+	"github.com/launchboxio/cluster-api-provider-proxmox/internal/scope"
+	"github.com/launchboxio/cluster-api-provider-proxmox/internal/storage"
 	"github.com/luthermonson/go-proxmox"
-	"github.com/pkg/sftp"
-	"golang.org/x/crypto/ssh"
 	"gopkg.in/yaml.v2"
 	goyaml "gopkg.in/yaml.v3"
 	v1 "k8s.io/api/core/v1"
@@ -19,8 +19,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/utils/strings/slices"
+	"path/filepath"
 	"sigs.k8s.io/cluster-api/api/v1beta1"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -44,8 +44,8 @@ const (
 // TODO: Remove a requirement for Cluster setup. Folks should be able
 // to run ClusterAPI on a single proxmox instance
 func (m *Machine) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	if m.ProxmoxMachine.GetDeletionTimestamp() != nil {
-		if controllerutil.ContainsFinalizer(m.ProxmoxMachine, machineFinalizer) {
+	if m.MachineScope.InfraMachine.GetDeletionTimestamp() != nil {
+		if controllerutil.ContainsFinalizer(m.MachineScope.InfraMachine, machineFinalizer) {
 			return m.reconcileDelete(ctx, req)
 		}
 		return ctrl.Result{}, nil
@@ -54,7 +54,7 @@ func (m *Machine) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result,
 }
 
 func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	clusterTemplate, err := getVmTemplate(m.ProxmoxClient, m.ProxmoxMachine.Spec.Template)
+	clusterTemplate, err := getVmTemplate(m.ProxmoxClient, m.MachineScope.InfraMachine.Spec.Template)
 	if err != nil || clusterTemplate == nil {
 		m.Logger.Error(err, "Failed to get VM template")
 		return ctrl.Result{}, err
@@ -72,7 +72,7 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{}, err
 	}
 
-	if m.ProxmoxMachine.Spec.ProviderID == "" {
+	if m.MachineScope.InfraMachine.Spec.ProviderID == "" {
 		node, err := m.selectNode(nil)
 		if err != nil {
 			m.Logger.Error(err, "Failed selecting node for VM")
@@ -80,7 +80,7 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 		}
 
 		// Try getting status again to prevent duplication of machines
-		if err := m.Get(ctx, req.NamespacedName, m.ProxmoxMachine); err != nil {
+		if err := m.Get(ctx, req.NamespacedName, m.MachineScope.InfraMachine); err != nil {
 			m.Logger.Error(err, "Failed to get ProxmoxMachine")
 			return ctrl.Result{}, err
 		}
@@ -89,29 +89,29 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 		// extra VM instances to be created //
 
 		vmid, task, err := template.Clone(&proxmox.VirtualMachineCloneOptions{
-			Name:   fmt.Sprintf("%s-%s", m.ProxmoxMachine.Namespace, m.ProxmoxMachine.Name),
+			Name:   fmt.Sprintf("%s-%s", m.MachineScope.InfraMachine.Namespace, m.MachineScope.InfraMachine.Name),
 			Target: node.Node,
 		})
 		m.Logger.Info("Creating VM")
 		if err != nil {
 			m.Logger.Error(err, "Failed creating VM")
-			m.Recorder.Event(m.ProxmoxMachine, v1.EventTypeWarning, err.Error(), "Failed creating VM")
+			m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeWarning, err.Error(), "Failed creating VM")
 			return ctrl.Result{}, err
 		}
 
-		m.ProxmoxMachine.Spec.ProviderID = fmt.Sprintf("%s%d", ProviderIDPrefix, vmid)
-		err = m.Update(ctx, m.ProxmoxMachine)
+		m.MachineScope.InfraMachine.Spec.ProviderID = fmt.Sprintf("%s%d", ProviderIDPrefix, vmid)
+		err = m.Update(ctx, m.MachineScope.InfraMachine)
 		if err != nil {
 			m.Logger.Error(err, "Failed updating ProxmoxMachine status")
 			return ctrl.Result{}, err
 		}
 
-		m.Recorder.Event(m.ProxmoxMachine, v1.EventTypeNormal, "", "Created VM with Provider ID "+m.ProxmoxMachine.Spec.ProviderID)
+		m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeNormal, "", "Created VM with Provider ID "+m.MachineScope.InfraMachine.Spec.ProviderID)
 
-		m.ProxmoxMachine.Status.Vmid = vmid
-		conditions.MarkTrue(m.ProxmoxMachine, VirtualMachineInitializing)
+		m.MachineScope.InfraMachine.Status.Vmid = vmid
+		conditions.MarkTrue(m.MachineScope.InfraMachine, VirtualMachineInitializing)
 
-		err = m.Status().Update(ctx, m.ProxmoxMachine)
+		err = m.Status().Update(ctx, m.MachineScope.InfraMachine)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -127,17 +127,17 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 	}
 
 	vmid, err := strconv.Atoi(
-		strings.TrimPrefix(m.ProxmoxMachine.Spec.ProviderID, ProviderIDPrefix),
+		strings.TrimPrefix(m.MachineScope.InfraMachine.Spec.ProviderID, ProviderIDPrefix),
 	)
 	if err != nil {
 		m.Logger.Error(err, "Failed parsing provider ID")
 		return ctrl.Result{}, err
 	}
 
-	if !controllerutil.ContainsFinalizer(m.ProxmoxMachine, machineFinalizer) {
+	if !controllerutil.ContainsFinalizer(m.MachineScope.InfraMachine, machineFinalizer) {
 		m.Logger.Info("Attaching finalizer")
-		controllerutil.AddFinalizer(m.ProxmoxMachine, machineFinalizer)
-		err = m.Update(ctx, m.ProxmoxMachine)
+		controllerutil.AddFinalizer(m.MachineScope.InfraMachine, machineFinalizer)
+		err = m.Update(ctx, m.MachineScope.InfraMachine)
 		return ctrl.Result{}, err
 	}
 
@@ -151,7 +151,7 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 	if vm == nil {
 		m.Logger.Info(fmt.Sprintf(
 			"Resource had VMID of %d, but it didnt exist in Proxmox. Purging and starting over",
-			m.ProxmoxMachine.Status.Vmid,
+			m.MachineScope.InfraMachine.Status.Vmid,
 		))
 		return ctrl.Result{RequeueAfter: time.Minute * 5}, nil
 		// We have stored a proxmox VMID in the status of the CRD, yet the
@@ -159,14 +159,14 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 		// status, ignore what exists in Proxmox, and create a fresh machine
 		// We don't want to do this. Any network connectivity issue with
 		// proxmox results in all of the machines being orphaned
-		//m.ProxmoxMachine.Status.Vmid = 0
-		//m.ProxmoxMachine.Status.Conditions = nil
-		//err = r.Status().Update(ctx, m.ProxmoxMachine)
+		//m.MachineScope.InfraMachine.Status.Vmid = 0
+		//m.MachineScope.InfraMachine.Status.Conditions = nil
+		//err = r.Status().Update(ctx, m.MachineScope.InfraMachine)
 		//return ctrl.Result{}, err
 	}
 
 	// Attach tags
-	tags := append(m.ProxmoxMachine.Spec.Tags, m.ProxmoxCluster.Spec.Tags...)
+	tags := append(m.MachineScope.InfraMachine.Spec.Tags, m.ClusterScope.InfraCluster.Spec.Tags...)
 	for _, tag := range tags {
 		if !vm.HasTag(tag) {
 			_, err := vm.AddTag(tag)
@@ -178,10 +178,10 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 
 	// If the user has provided a resource pool, attach the
 	// created VM to the specified pool
-	if m.ProxmoxCluster.Spec.Pool != "" {
-		pool, err := m.ensurePool(m.ProxmoxCluster.Spec.Pool)
+	if m.ClusterScope.InfraCluster.Spec.Pool != "" {
+		pool, err := m.ensurePool(m.ClusterScope.InfraCluster.Spec.Pool)
 		if err != nil {
-			m.Recorder.Event(m.ProxmoxMachine, v1.EventTypeWarning, err.Error(), "Failed getting Resource Pool: %v")
+			m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeWarning, err.Error(), "Failed getting Resource Pool: %v")
 			m.Logger.Error(err, "Failed to ensure VM pool")
 			return ctrl.Result{}, err
 		}
@@ -200,7 +200,7 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 			if err != nil {
 				return ctrl.Result{}, err
 			}
-			m.Recorder.Event(m.ProxmoxMachine, "Normal", "", "Added to resource pool "+pool.PoolID)
+			m.Recorder.Event(m.MachineScope.InfraMachine, "Normal", "", "Added to resource pool "+pool.PoolID)
 		}
 	}
 
@@ -209,15 +209,16 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 	// - Setup cicustom
 	// - Migrate to a target node
 	// - Start the Virtual Machine
-	if conditions.IsTrue(m.ProxmoxMachine, VirtualMachineInitializing) {
-		if m.Machine.Spec.Bootstrap.DataSecretName == nil {
+	if conditions.IsTrue(m.MachineScope.InfraMachine, VirtualMachineInitializing) {
+		if m.MachineScope.Machine.Spec.Bootstrap.DataSecretName == nil {
+			m.Recorder.Event(m.MachineScope.InfraMachine, "Normal", "Bootstrap secret not created", "Waiting to start VM")
 			m.Logger.Info("No bootstrap secret found...")
-			return ctrl.Result{}, nil
+			return ctrl.Result{RequeueAfter: time.Second * 10}, nil
 		}
 		bootstrapSecret := &v1.Secret{}
 		if err := m.Get(ctx, types.NamespacedName{
-			Namespace: m.ProxmoxMachine.Namespace,
-			Name:      *m.Machine.Spec.Bootstrap.DataSecretName,
+			Namespace: m.MachineScope.InfraMachine.Namespace,
+			Name:      *m.MachineScope.Machine.Spec.Bootstrap.DataSecretName,
 		}, bootstrapSecret); err != nil {
 			m.Logger.Info("Failed finding bootstrap secret")
 			return ctrl.Result{}, err
@@ -225,50 +226,55 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 
 		credentialsSecret := &v1.Secret{}
 		if err := m.Get(ctx, types.NamespacedName{
-			Namespace: m.ProxmoxMachine.Namespace,
-			Name:      m.ProxmoxCluster.Spec.Snippets.CredentialsSecretName,
+			Namespace: m.MachineScope.InfraMachine.Namespace,
+			Name:      m.ClusterScope.InfraCluster.Spec.Snippets.CredentialsSecretName,
 		}, credentialsSecret); err != nil {
 			m.Logger.Info("Failed finding storage credentials")
 			return ctrl.Result{}, err
 		}
 
+		store, err := storage.SftpFromSecret(credentialsSecret)
+		if err != nil {
+			m.Logger.Error(err, "Failed creating storage client")
+			return ctrl.Result{}, err
+		}
+
 		err = generateSnippets(
+			store,
 			bootstrapSecret,
-			*m.Machine.Spec.Version,
-			credentialsSecret,
+			*m.MachineScope.Machine.Spec.Version,
 			"/mnt/default/snippets/snippets/",
-			m.ProxmoxMachine,
-			m.Machine,
+			m.MachineScope,
 		)
 		if err != nil {
 			m.Logger.Info("Failed to generate snippet for machine")
 			return ctrl.Result{}, err
 		}
 
-		task, err := vm.Config(vmInitializationOptions(m.ProxmoxCluster, m.ProxmoxMachine)...)
+		task, err := vm.Config(vmInitializationOptions(m.ClusterScope.InfraCluster, m.MachineScope.InfraMachine)...)
 		if err != nil {
-			m.Recorder.Event(m.ProxmoxMachine, v1.EventTypeWarning, err.Error(), "VM Configuration failure")
+			m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeWarning, err.Error(), "VM Configuration failure")
 			m.Logger.Error(err, "Failed to reconfigure VM")
 			return ctrl.Result{Requeue: false}, err
 		}
 
 		if err = task.Wait(time.Second*5, VmConfigurationTimeout); err != nil {
-			m.Recorder.Event(m.ProxmoxMachine, v1.EventTypeWarning, err.Error(), "VM Configuration timeout")
+			m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeWarning, err.Error(), "VM Configuration timeout")
 			m.Logger.Error(err, "Timed out waiting for VM to finish configuring")
 			return ctrl.Result{}, err
 		}
 
 		conditions.MarkFalse(
-			m.ProxmoxMachine, VirtualMachineInitializing, "Completed",
+			m.MachineScope.InfraMachine, VirtualMachineInitializing, "Completed",
 			v1beta1.ConditionSeverityNone, "VM initialization completed")
 
-		err = m.Status().Update(ctx, m.ProxmoxMachine)
+		err = m.Status().Update(ctx, m.MachineScope.InfraMachine)
 		if err != nil {
 			m.Logger.Error(err, "Failed updating ProxmoxMachine status")
 			return ctrl.Result{}, err
 		}
 
-		m.Recorder.Event(m.ProxmoxMachine, "Normal", "", "Starting machine")
+		m.Recorder.Event(m.MachineScope.InfraMachine, "Normal", "", "Starting machine")
 		task, err = vm.Start()
 		if err != nil {
 			m.Logger.Error(err, "Failed starting VM")
@@ -276,31 +282,31 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 		}
 
 		if err = task.Wait(time.Second*5, VmStartTimeout); err != nil {
-			m.Recorder.Event(m.ProxmoxMachine, v1.EventTypeWarning, err.Error(), "VM Start timeout")
+			m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeWarning, err.Error(), "VM Start timeout")
 			m.Logger.Error(err, "Timed out waiting for VM to start")
 			return ctrl.Result{}, err
 		}
 
-		m.Recorder.Event(m.ProxmoxMachine, v1.EventTypeNormal, "", "Machine started")
+		m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeNormal, "", "Machine started")
 		return ctrl.Result{}, nil
 	}
 
 	// Ensure our machine is marked as Ready
-	if !m.ProxmoxMachine.Status.Ready {
-		_ = m.Get(ctx, req.NamespacedName, m.ProxmoxMachine)
-		m.ProxmoxMachine.Status.Ready = true
-		if err = m.Status().Update(ctx, m.ProxmoxMachine); err != nil {
+	if !m.MachineScope.InfraMachine.Status.Ready {
+		_ = m.Get(ctx, req.NamespacedName, m.MachineScope.InfraMachine)
+		m.MachineScope.InfraMachine.Status.Ready = true
+		if err = m.Status().Update(ctx, m.MachineScope.InfraMachine); err != nil {
 			return ctrl.Result{}, err
 		}
 
-		conditions.MarkTrue(m.ProxmoxMachine, "Ready")
-		err = m.Status().Update(ctx, m.ProxmoxMachine)
+		conditions.MarkTrue(m.MachineScope.InfraMachine, "Ready")
+		err = m.Status().Update(ctx, m.MachineScope.InfraMachine)
 		return ctrl.Result{}, nil
 	}
 
 	// Lastly, wait for our node to get the registered providerID. Once it does,
 	// we find the node and annotate it with the machine ID
-	if m.Machine.Status.NodeRef == nil {
+	if m.MachineScope.Machine.Status.NodeRef == nil {
 		// Attempt to attach node until successful
 		// We probably shouldnt endlessly retry this,
 		// TODO: Find a better method to notice when the node is ready
@@ -317,7 +323,7 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 func (m *Machine) getRESTClient(clusterName string) (*kubernetes.Clientset, error) {
 	secret := &v1.Secret{}
 	err := m.Get(context.TODO(), types.NamespacedName{
-		Namespace: m.Cluster.Namespace,
+		Namespace: m.ClusterScope.Cluster.Namespace,
 		Name:      fmt.Sprintf("%s-kubeconfig", clusterName),
 	}, secret)
 	if err != nil {
@@ -331,12 +337,12 @@ func (m *Machine) getRESTClient(clusterName string) (*kubernetes.Clientset, erro
 }
 
 func (m *Machine) attachNode(ctx context.Context) (ctrl.Result, error) {
-	client, err := m.getRESTClient(m.Cluster.Name)
+	client, err := m.getRESTClient(m.ClusterScope.Cluster.Name)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	nodeName := fmt.Sprintf("%s-%s", m.ProxmoxMachine.Namespace, m.ProxmoxMachine.Name)
+	nodeName := fmt.Sprintf("%s-%s", m.MachineScope.InfraMachine.Namespace, m.MachineScope.InfraMachine.Name)
 	node, err := client.
 		CoreV1().
 		Nodes().
@@ -353,11 +359,11 @@ func (m *Machine) attachNode(ctx context.Context) (ctrl.Result, error) {
 
 	var patches []Patch
 
-	if node.Spec.ProviderID != m.ProxmoxMachine.Spec.ProviderID {
+	if node.Spec.ProviderID != m.MachineScope.InfraMachine.Spec.ProviderID {
 		patches = append(patches, Patch{
 			Op:    "add",
 			Path:  "/spec/providerID",
-			Value: m.ProxmoxMachine.Spec.ProviderID,
+			Value: m.MachineScope.InfraMachine.Spec.ProviderID,
 		})
 	}
 
@@ -365,7 +371,7 @@ func (m *Machine) attachNode(ctx context.Context) (ctrl.Result, error) {
 		patches = append(patches, Patch{
 			Op:    "add",
 			Path:  "/metadata/annotations/cluster.x-k8s.io",
-			Value: m.Machine.Name,
+			Value: m.MachineScope.Machine.Name,
 		})
 	}
 
@@ -377,7 +383,7 @@ func (m *Machine) attachNode(ctx context.Context) (ctrl.Result, error) {
 			Nodes().
 			Patch(ctx, node.Name, types.JSONPatchType, payloadBytes, v12.PatchOptions{})
 		if err != nil {
-			m.Recorder.Event(m.ProxmoxMachine, v1.EventTypeWarning, err.Error(), "Failed attaching node to machine")
+			m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeWarning, err.Error(), "Failed attaching node to machine")
 			return ctrl.Result{}, err
 		}
 	}
@@ -388,7 +394,7 @@ func (m *Machine) reconcileDelete(ctx context.Context, req ctrl.Request) (ctrl.R
 	// TODO: Perform out of band cleanup
 	m.Logger.Info("Cleaning up machine for finalizer")
 	vmid, err := strconv.Atoi(
-		strings.TrimPrefix(m.ProxmoxMachine.Spec.ProviderID, ProviderIDPrefix),
+		strings.TrimPrefix(m.MachineScope.InfraMachine.Spec.ProviderID, ProviderIDPrefix),
 	)
 	if err != nil {
 		m.Logger.Error(err, "Failed parsing provider ID")
@@ -400,8 +406,8 @@ func (m *Machine) reconcileDelete(ctx context.Context, req ctrl.Request) (ctrl.R
 	}
 	if vm == nil {
 		// Couldnt find the VM, I suppose we assume its deleted
-		controllerutil.RemoveFinalizer(m.ProxmoxMachine, machineFinalizer)
-		err = m.Update(context.TODO(), m.ProxmoxMachine)
+		controllerutil.RemoveFinalizer(m.MachineScope.InfraMachine, machineFinalizer)
+		err = m.Update(context.TODO(), m.MachineScope.InfraMachine)
 		return ctrl.Result{}, err
 	}
 
@@ -410,7 +416,7 @@ func (m *Machine) reconcileDelete(ctx context.Context, req ctrl.Request) (ctrl.R
 
 	// First, we stop the VM
 	if vm.Status == "running" {
-		m.Recorder.Event(m.ProxmoxMachine, v1.EventTypeNormal, "", "Stopping VM")
+		m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeNormal, "", "Stopping VM")
 		task, err := vm.Stop()
 		if err != nil {
 			return ctrl.Result{}, err
@@ -418,35 +424,33 @@ func (m *Machine) reconcileDelete(ctx context.Context, req ctrl.Request) (ctrl.R
 		if err = task.Wait(time.Second*5, VmStopTimeout); err != nil {
 			return ctrl.Result{}, err
 		}
-
 	}
 
 	disks := vm.VirtualMachineConfig.MergeIDEs()
 	for disk, mount := range disks {
 		if strings.Contains(mount, "cloudinit") {
-			m.Recorder.Event(m.ProxmoxMachine, v1.EventTypeNormal, "", "Unlinking Disk "+disk)
+			m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeNormal, "", "Unlinking Disk "+disk)
 			m.Logger.Info("Unlinking disk", "Disk", disk)
-			task, err := vm.UnlinkDisk(disk, true)
-			// Unexpectedly, this does throw an error. However, it does
-			// allow the volume to be cleaned up when the instance
-			// is terminated. For now, that's acceptable enough
+
+			task, err := vm.Config(proxmox.VirtualMachineOption{
+				Name:  disk,
+				Value: "none,media=cdrom",
+			})
 			if err != nil {
-				m.Logger.Error(err, "Failed unlinking disk")
-				return ctrl.Result{}, err
+				m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeWarning, err.Error(), "VM Configuration failure")
+				m.Logger.Error(err, "Failed to reconfigure VM")
+				return ctrl.Result{Requeue: false}, err
 			}
-			if task == nil {
-				m.Logger.Info("Task was nil when unlinking disk. Queuing for cleanup again")
-				// Unknown issue when unlinking disks. Requeue and try again?
-				return ctrl.Result{Requeue: true}, nil
-			}
-			if err = task.Wait(time.Second*5, VmStopTimeout); err != nil {
-				m.Logger.Error(err, "Timeout exceeded waiting for disk removal")
+
+			if err = task.Wait(time.Second*5, VmConfigurationTimeout); err != nil {
+				m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeWarning, err.Error(), "VM Configuration timeout")
+				m.Logger.Error(err, "Timed out waiting for VM to finish configuring")
 				return ctrl.Result{}, err
 			}
 		}
 	}
 
-	m.Recorder.Event(m.ProxmoxMachine, v1.EventTypeNormal, "", "Deleting VM")
+	m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeNormal, "", "Deleting VM")
 	task, err := vm.Delete()
 	if err != nil {
 		return ctrl.Result{}, err
@@ -455,8 +459,8 @@ func (m *Machine) reconcileDelete(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{}, err
 	}
 
-	controllerutil.RemoveFinalizer(m.ProxmoxMachine, machineFinalizer)
-	err = m.Update(context.TODO(), m.ProxmoxMachine)
+	controllerutil.RemoveFinalizer(m.MachineScope.InfraMachine, machineFinalizer)
+	err = m.Update(context.TODO(), m.MachineScope.InfraMachine)
 	return ctrl.Result{}, err
 }
 
@@ -512,22 +516,26 @@ func getVmTemplate(px *proxmox.Client, templateName string) (*proxmox.ClusterRes
 }
 
 func vmInitializationOptions(cluster *infrastructurev1alpha1.ProxmoxCluster, machine *infrastructurev1alpha1.ProxmoxMachine) []proxmox.VirtualMachineOption {
+	cicustom := []string{
+		fmt.Sprintf(
+			"user=%s%s-%s-user.yaml",
+			cluster.Spec.Snippets.StorageUri,
+			machine.Namespace, machine.Name,
+		),
+	}
+
+	if machine.Spec.NetworkUserData != "" {
+		cicustom = append(cicustom, fmt.Sprintf(
+			"network=%s%s-%s-network.yaml",
+			cluster.Spec.Snippets.StorageUri,
+			machine.Namespace, machine.Name,
+		))
+	}
 	options := []proxmox.VirtualMachineOption{
 		{Name: "memory", Value: machine.Spec.Resources.Memory},
 		{Name: "sockets", Value: machine.Spec.Resources.CpuSockets},
 		{Name: "cores", Value: machine.Spec.Resources.CpuCores},
-		{Name: "cicustom", Value: strings.Join([]string{
-			fmt.Sprintf(
-				"user=%s%s-%s-user.yaml",
-				cluster.Spec.Snippets.StorageUri,
-				machine.Namespace, machine.Name,
-			),
-			fmt.Sprintf(
-				"network=%s%s-%s-network.yaml",
-				cluster.Spec.Snippets.StorageUri,
-				machine.Namespace, machine.Name,
-			),
-		}, ",")},
+		{Name: "cicustom", Value: strings.Join(cicustom, ",")},
 		{Name: "agent", Value: 1},
 	}
 
@@ -547,12 +555,11 @@ func vmInitializationOptions(cluster *infrastructurev1alpha1.ProxmoxCluster, mac
 // https://kubernetes.io/docs/reference/config-api/kubelet-config.v1beta1/
 // providerID: proxmoxMachine.Spec.ProviderID
 func generateSnippets(
+	store storage.Storage,
 	secret *v1.Secret,
 	version string,
-	credentialsSecret *v1.Secret,
 	storagePath string,
-	proxmoxMachine *infrastructurev1alpha1.ProxmoxMachine,
-	machine *clusterv1.Machine,
+	machineScope *scope.MachineScope,
 ) error {
 	bootstrapSecret := &BootstrapSecret{}
 	err := yaml.Unmarshal(secret.Data["value"], bootstrapSecret)
@@ -561,7 +568,7 @@ func generateSnippets(
 	}
 
 	var packageInstall bytes.Buffer
-	hostname := proxmoxMachine.Namespace + "-" + proxmoxMachine.Name
+	hostname := machineScope.InfraMachine.Namespace + "-" + machineScope.InfraMachine.Name
 	err = install.PackageManagerInstallScript.Execute(&packageInstall, install.PackageManagerInstallArgs{
 		Hostname:          hostname,
 		KubernetesVersion: strings.Trim(version, "v"),
@@ -577,13 +584,13 @@ func generateSnippets(
 		},
 	)
 
-	if len(proxmoxMachine.Spec.SshKeys) > 0 {
+	if len(machineScope.InfraMachine.Spec.SshKeys) > 0 {
 		bootstrapSecret.Users = []BootstrapUser{{
 			Name:                "ubuntu",
 			Lock_Passwd:         false,
 			Groups:              []string{"sudo"},
 			Sudo:                "ALL=(ALL) NOPASSWD:ALL",
-			Ssh_Authorized_Keys: proxmoxMachine.Spec.SshKeys,
+			Ssh_Authorized_Keys: machineScope.InfraMachine.Spec.SshKeys,
 		}}
 	}
 
@@ -592,26 +599,22 @@ func generateSnippets(
 		return err
 	}
 
-	// We now have 2 snippets, let's write them to the storage
-	networkFileName := fmt.Sprintf("%s-%s-network.yaml", proxmoxMachine.Namespace, proxmoxMachine.Name)
-	userFileName := fmt.Sprintf("%s-%s-user.yaml", proxmoxMachine.Namespace, proxmoxMachine.Name)
-	err = writeFile(
-		credentialsSecret,
-		storagePath,
-		networkFileName,
-		[]byte(fmt.Sprintf(`
+	if machineScope.InfraMachine.Spec.NetworkUserData != "" {
+		networkFileName := fmt.Sprintf("%s-%s-network.yaml", machineScope.InfraMachine.Namespace, machineScope.InfraMachine.Name)
+		err = store.WriteFile(
+			filepath.Join(storagePath, networkFileName),
+			[]byte(fmt.Sprintf(`
 #cloud-config
 %s
-`, proxmoxMachine.Spec.NetworkUserData)),
-	)
-	if err != nil {
-		return err
+`, machineScope.InfraMachine.Spec.NetworkUserData)))
+		if err != nil {
+			return err
+		}
 	}
 
-	err = writeFile(
-		credentialsSecret,
-		storagePath,
-		userFileName,
+	userFileName := fmt.Sprintf("%s-%s-user.yaml", machineScope.InfraMachine.Namespace, machineScope.InfraMachine.Name)
+	err = store.WriteFile(
+		filepath.Join(storagePath, userFileName),
 		[]byte(fmt.Sprintf(`
 #cloud-config
 %s
@@ -624,45 +627,13 @@ func generateSnippets(
 	return nil
 }
 
-func writeFile(credentials *v1.Secret, storagePath string, filePath string, contents []byte) error {
-	config := &ssh.ClientConfig{
-		User: string(credentials.Data["user"]),
-		Auth: []ssh.AuthMethod{
-			ssh.Password(string(credentials.Data["password"])),
-		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-	}
-	client, err := ssh.Dial("tcp", string(credentials.Data["host"]), config)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-
-	fs, err := sftp.NewClient(client)
-	if err != nil {
-		return err
-	}
-	defer fs.Close()
-
-	dstFile, err := fs.Create(fmt.Sprintf(
-		"%s/%s", storagePath, filePath,
-	))
-	if err != nil {
-		return err
-	}
-	defer dstFile.Close()
-
-	_, err = dstFile.Write(contents)
-	return err
-}
-
 // ensurePool lists the current pools for the cluster, and if a matching
 // pool is found, returns a handle to it. If its not found, we create a
 // new resource pool, returning that to the caller
 func (m *Machine) ensurePool(poolId string) (*proxmox.Pool, error) {
 	pool, err := m.ProxmoxClient.Pool(poolId)
 	if err != nil {
-		err = m.ProxmoxClient.NewPool(poolId, m.Cluster.Name)
+		err = m.ProxmoxClient.NewPool(poolId, m.ClusterScope.Cluster.Name)
 		if err != nil {
 			return nil, err
 		}

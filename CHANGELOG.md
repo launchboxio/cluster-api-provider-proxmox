@@ -2,6 +2,48 @@
 
 All notable changes to this project will be documented in this file.
 
+### [0.2.3](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.2.2...v0.2.3) (2023-09-22)
+
+
+### Bug Fixes
+
+* **scope:** Use scopes to encapsulate the cluster and machine references ([6e12d6c](https://github.com/launchboxio/cluster-api-provider-proxmox/commit/6e12d6c1eb9c2eaf98e3888b2eb36fcef5683eca))
+
+### [0.2.2](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.2.1...v0.2.2) (2023-09-22)
+
+
+### Bug Fixes
+
+* **typo:** Committed typo in strings ([842187c](https://github.com/launchboxio/cluster-api-provider-proxmox/commit/842187ca8bd8a4c6ca4547406c12afc01f287c43))
+
+### [0.2.1](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.2.0...v0.2.1) (2023-09-22)
+
+
+### Bug Fixes
+
+* **cloudinit:** Allow network data to be configurable ([ab297d4](https://github.com/launchboxio/cluster-api-provider-proxmox/commit/ab297d4f080a0db3a2defd2fdf7e309215aa5c2b))
+
+## [0.2.0](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.1.1...v0.2.0) (2023-09-22)
+
+
+### Features
+
+* **revert:** Were not ready to mount storage yet ([1b13070](https://github.com/launchboxio/cluster-api-provider-proxmox/commit/1b130701e854de0c99d04e1aa2edf8327fbe8279))
+
+### [0.1.1](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.1.0...v0.1.1) (2023-09-22)
+
+
+### Bug Fixes
+
+* **storage:** Rather than unlink, reconfigure the VM with an empty IDE2 ([#45](https://github.com/launchboxio/cluster-api-provider-proxmox/issues/45)) ([d1c2d54](https://github.com/launchboxio/cluster-api-provider-proxmox/commit/d1c2d54523b6fa91422b9b874719d09d93fb66bf))
+
+## [0.1.0](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.0.14...v0.1.0) (2023-09-22)
+
+
+### Features
+
+* **storage:** Require snippet storage be locally mounted, rather than handle several storage mechanisms ([#44](https://github.com/launchboxio/cluster-api-provider-proxmox/issues/44)) ([f273500](https://github.com/launchboxio/cluster-api-provider-proxmox/commit/f2735006c3636d104b4af9d3a3b4c9951f599002))
+
 ### [0.0.14](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.0.13...v0.0.14) (2023-09-21)
 
 

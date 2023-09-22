@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"github.com/launchboxio/cluster-api-provider-proxmox/internal/scope"
 	"github.com/luthermonson/go-proxmox"
 	"k8s.io/client-go/tools/record"
 
@@ -129,15 +130,23 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, fmt.Errorf("error getting proxmoxcluster: %w", getErr)
 	}
 
+	clusterScope := &scope.ClusterScope{
+		Cluster:      cluster,
+		InfraCluster: proxmoxCluster,
+	}
+
+	machineScope := &scope.MachineScope{
+		Machine:      machine,
+		InfraMachine: proxmoxMachine,
+	}
+
 	machineReconciler := &machinereconciler.Machine{
-		ProxmoxClient:  proxmoxClient,
-		ProxmoxMachine: proxmoxMachine,
-		Machine:        machine,
-		Cluster:        cluster,
-		ProxmoxCluster: proxmoxCluster,
-		Logger:         contextLogger,
-		Client:         r.Client,
-		Recorder:       r.Recorder,
+		ProxmoxClient: proxmoxClient,
+		ClusterScope:  clusterScope,
+		MachineScope:  machineScope,
+		Logger:        contextLogger,
+		Client:        r.Client,
+		Recorder:      r.Recorder,
 	}
 
 	return machineReconciler.Reconcile(ctx, req)

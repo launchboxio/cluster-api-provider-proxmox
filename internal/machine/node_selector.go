@@ -17,7 +17,7 @@ func (m *Machine) selectNode(selector Selector) (*proxmox.NodeStatus, error) {
 	if err != nil {
 		return nil, err
 	}
-	filteredNodes := filterNodes(nodes, m.ProxmoxMachine)
+	filteredNodes := filterNodes(nodes, m.MachineScope.InfraMachine)
 	if selector == nil {
 		selector = &RandomNodeGroupSelector{}
 	}
