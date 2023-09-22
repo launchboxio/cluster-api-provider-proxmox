@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+### [0.2.1](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.2.0...v0.2.1) (2023-09-22)
+
+
+### Bug Fixes
+
+* **cloudinit:** Allow network data to be configurable ([ab297d4](https://github.com/launchboxio/cluster-api-provider-proxmox/commit/ab297d4f080a0db3a2defd2fdf7e309215aa5c2b))
+
 ## [0.2.0](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.1.1...v0.2.0) (2023-09-22)
 
 
