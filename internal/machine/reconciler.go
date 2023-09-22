@@ -414,21 +414,20 @@ func (m *Machine) reconcileDelete(ctx context.Context, req ctrl.Request) (ctrl.R
 		if strings.Contains(mount, "cloudinit") {
 			m.Recorder.Event(m.ProxmoxMachine, v1.EventTypeNormal, "", "Unlinking Disk "+disk)
 			m.Logger.Info("Unlinking disk", "Disk", disk)
-			task, err := vm.UnlinkDisk(disk, true)
-			// Unexpectedly, this does throw an error. However, it does
-			// allow the volume to be cleaned up when the instance
-			// is terminated. For now, that's acceptable enough
+
+			task, err := vm.Config(proxmox.VirtualMachineOption{
+				Name:  disk,
+				Value: "none,media=cdrom",
+			})
 			if err != nil {
-				m.Logger.Error(err, "Failed unlinking disk")
-				return ctrl.Result{}, err
+				m.Recorder.Event(m.ProxmoxMachine, v1.EventTypeWarning, err.Error(), "VM Configuration failure")
+				m.Logger.Error(err, "Failed to reconfigure VM")
+				return ctrl.Result{Requeue: false}, err
 			}
-			if task == nil {
-				m.Logger.Info("Task was nil when unlinking disk. Queuing for cleanup again")
-				// Unknown issue when unlinking disks. Requeue and try again?
-				return ctrl.Result{Requeue: true}, nil
-			}
-			if err = task.Wait(time.Second*5, VmStopTimeout); err != nil {
-				m.Logger.Error(err, "Timeout exceeded waiting for disk removal")
+
+			if err = task.Wait(time.Second*5, VmConfigurationTimeout); err != nil {
+				m.Recorder.Event(m.ProxmoxMachine, v1.EventTypeWarning, err.Error(), "VM Configuration timeout")
+				m.Logger.Error(err, "Timed out waiting for VM to finish configuring")
 				return ctrl.Result{}, err
 			}
 		}

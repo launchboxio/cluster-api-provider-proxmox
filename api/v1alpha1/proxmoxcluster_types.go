@@ -54,7 +54,7 @@ type ProxmoxClusterSnippetsConfig struct {
 	// Rather than delegate the management of various storage
 	// engines, we assume that the snippets volume is
 	// available locally
-	LocalPath string `json:"localPath"`
+	LocalPath string `json:"localPath,omitempty"`
 }
 
 // ProxmoxClusterStatus defines the observed state of ProxmoxCluster
