@@ -68,16 +68,14 @@ spec:
                 type: string
               snippets:
                 properties:
-                  localPath:
-                    description: Where the snippets storage is mounted locally Rather
-                      than delegate the management of various storage engines, we
-                      assume that the snippets volume is available locally
+                  credentials:
                     type: string
                   storageUri:
                     description: 'Configure the base URI for mounting the snippets
                       storage on VMs Example: snippets-storage:/snippets/'
                     type: string
                 required:
+                - credentials
                 - storageUri
                 type: object
               tags:

@@ -211,8 +211,9 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 	// - Start the Virtual Machine
 	if conditions.IsTrue(m.ProxmoxMachine, VirtualMachineInitializing) {
 		if m.Machine.Spec.Bootstrap.DataSecretName == nil {
+			m.Recorder.Event(m.ProxmoxMachine, "Normal", "Bootstrap secret not created", "Waiting to start VM")
 			m.Logger.Info("No bootstrap secret found...")
-			return ctrl.Result{}, nil
+			return ctrl.Result{RequeueAfter: time.Second * 10}, nil
 		}
 		bootstrapSecret := &v1.Secret{}
 		if err := m.Get(ctx, types.NamespacedName{
@@ -511,22 +512,26 @@ func getVmTemplate(px *proxmox.Client, templateName string) (*proxmox.ClusterRes
 }
 
 func vmInitializationOptions(cluster *infrastructurev1alpha1.ProxmoxCluster, machine *infrastructurev1alpha1.ProxmoxMachine) []proxmox.VirtualMachineOption {
+	cicustom := []strings{
+		fmt.Sprintf(
+			"user=%s%s-%s-user.yaml",
+			cluster.Spec.Snippets.StorageUri,
+			machine.Namespace, machine.Name,
+		),
+	}
+
+	if machine.Spec.NetworkUserData != "" {
+		cicustom = append(cicustom, fmt.Sprintf(
+			"network=%s%s-%s-network.yaml",
+			cluster.Spec.Snippets.StorageUri,
+			machine.Namespace, machine.Name,
+		))
+	}
 	options := []proxmox.VirtualMachineOption{
 		{Name: "memory", Value: machine.Spec.Resources.Memory},
 		{Name: "sockets", Value: machine.Spec.Resources.CpuSockets},
 		{Name: "cores", Value: machine.Spec.Resources.CpuCores},
-		{Name: "cicustom", Value: strings.Join([]string{
-			fmt.Sprintf(
-				"user=%s%s-%s-user.yaml",
-				cluster.Spec.Snippets.StorageUri,
-				machine.Namespace, machine.Name,
-			),
-			fmt.Sprintf(
-				"network=%s%s-%s-network.yaml",
-				cluster.Spec.Snippets.StorageUri,
-				machine.Namespace, machine.Name,
-			),
-		}, ",")},
+		{Name: "cicustom", Value: strings.Join(cicustom, ",")},
 		{Name: "agent", Value: 1},
 	}
 
@@ -591,22 +596,23 @@ func generateSnippets(
 		return err
 	}
 
-	// We now have 2 snippets, let's write them to the storage
-	networkFileName := fmt.Sprintf("%s-%s-network.yaml", proxmoxMachine.Namespace, proxmoxMachine.Name)
-	userFileName := fmt.Sprintf("%s-%s-user.yaml", proxmoxMachine.Namespace, proxmoxMachine.Name)
-	err = writeFile(
-		credentialsSecret,
-		storagePath,
-		networkFileName,
-		[]byte(fmt.Sprintf(`
+	if proxmoxMachine.Spec.NetworkUserData != "" {
+		networkFileName := fmt.Sprintf("%s-%s-network.yaml", proxmoxMachine.Namespace, proxmoxMachine.Name)
+		err = writeFile(
+			credentialsSecret,
+			storagePath,
+			networkFileName,
+			[]byte(fmt.Sprintf(`
 #cloud-config
 %s
 `, proxmoxMachine.Spec.NetworkUserData)),
-	)
-	if err != nil {
-		return err
+		)
+		if err != nil {
+			return err
+		}
 	}
 
+	userFileName := fmt.Sprintf("%s-%s-user.yaml", proxmoxMachine.Namespace, proxmoxMachine.Name)
 	err = writeFile(
 		credentialsSecret,
 		storagePath,
