@@ -9,8 +9,6 @@ import (
 	infrastructurev1alpha1 "github.com/launchboxio/cluster-api-provider-proxmox/api/v1alpha1"
 	"github.com/launchboxio/cluster-api-provider-proxmox/internal/install"
 	"github.com/luthermonson/go-proxmox"
-	"github.com/pkg/sftp"
-	"golang.org/x/crypto/ssh"
 	"gopkg.in/yaml.v2"
 	goyaml "gopkg.in/yaml.v3"
 	v1 "k8s.io/api/core/v1"
@@ -19,8 +17,9 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/utils/strings/slices"
+	"os"
+	"path/filepath"
 	"sigs.k8s.io/cluster-api/api/v1beta1"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -223,22 +222,11 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 			return ctrl.Result{}, err
 		}
 
-		credentialsSecret := &v1.Secret{}
-		if err := m.Get(ctx, types.NamespacedName{
-			Namespace: m.ProxmoxMachine.Namespace,
-			Name:      m.ProxmoxCluster.Spec.Snippets.CredentialsSecretName,
-		}, credentialsSecret); err != nil {
-			m.Logger.Info("Failed finding storage credentials")
-			return ctrl.Result{}, err
-		}
-
 		err = generateSnippets(
 			bootstrapSecret,
 			*m.Machine.Spec.Version,
-			credentialsSecret,
 			"/mnt/default/snippets/snippets/",
 			m.ProxmoxMachine,
-			m.Machine,
 		)
 		if err != nil {
 			m.Logger.Info("Failed to generate snippet for machine")
@@ -549,10 +537,8 @@ func vmInitializationOptions(cluster *infrastructurev1alpha1.ProxmoxCluster, mac
 func generateSnippets(
 	secret *v1.Secret,
 	version string,
-	credentialsSecret *v1.Secret,
 	storagePath string,
 	proxmoxMachine *infrastructurev1alpha1.ProxmoxMachine,
-	machine *clusterv1.Machine,
 ) error {
 	bootstrapSecret := &BootstrapSecret{}
 	err := yaml.Unmarshal(secret.Data["value"], bootstrapSecret)
@@ -596,7 +582,6 @@ func generateSnippets(
 	networkFileName := fmt.Sprintf("%s-%s-network.yaml", proxmoxMachine.Namespace, proxmoxMachine.Name)
 	userFileName := fmt.Sprintf("%s-%s-user.yaml", proxmoxMachine.Namespace, proxmoxMachine.Name)
 	err = writeFile(
-		credentialsSecret,
 		storagePath,
 		networkFileName,
 		[]byte(fmt.Sprintf(`
@@ -609,7 +594,6 @@ func generateSnippets(
 	}
 
 	err = writeFile(
-		credentialsSecret,
 		storagePath,
 		userFileName,
 		[]byte(fmt.Sprintf(`
@@ -624,35 +608,9 @@ func generateSnippets(
 	return nil
 }
 
-func writeFile(credentials *v1.Secret, storagePath string, filePath string, contents []byte) error {
-	config := &ssh.ClientConfig{
-		User: string(credentials.Data["user"]),
-		Auth: []ssh.AuthMethod{
-			ssh.Password(string(credentials.Data["password"])),
-		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-	}
-	client, err := ssh.Dial("tcp", string(credentials.Data["host"]), config)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-
-	fs, err := sftp.NewClient(client)
-	if err != nil {
-		return err
-	}
-	defer fs.Close()
-
-	dstFile, err := fs.Create(fmt.Sprintf(
-		"%s/%s", storagePath, filePath,
-	))
-	if err != nil {
-		return err
-	}
-	defer dstFile.Close()
-
-	_, err = dstFile.Write(contents)
+func writeFile(storagePath string, filePath string, contents []byte) error {
+	fullPath := filepath.Join(storagePath, filePath)
+	err := os.WriteFile(fullPath, contents, 0644)
 	return err
 }
 
