@@ -47,7 +47,6 @@ spec:
     port: 6443
   snippets:
     storageUri: "snippets:snippets/"
-    credentials: storage-access
   pool: testing
   tags:
     - testing
