@@ -9,9 +9,8 @@ import (
 	infrastructurev1alpha1 "github.com/launchboxio/cluster-api-provider-proxmox/api/v1alpha1"
 	"github.com/launchboxio/cluster-api-provider-proxmox/internal/install"
 	"github.com/launchboxio/cluster-api-provider-proxmox/internal/scope"
+	"github.com/launchboxio/cluster-api-provider-proxmox/internal/storage"
 	"github.com/luthermonson/go-proxmox"
-	"github.com/pkg/sftp"
-	"golang.org/x/crypto/ssh"
 	"gopkg.in/yaml.v2"
 	goyaml "gopkg.in/yaml.v3"
 	v1 "k8s.io/api/core/v1"
@@ -20,6 +19,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/utils/strings/slices"
+	"path/filepath"
 	"sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -233,10 +233,16 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 			return ctrl.Result{}, err
 		}
 
+		store, err := storage.SftpFromSecret(credentialsSecret)
+		if err != nil {
+			m.Logger.Error(err, "Failed creating storage client")
+			return ctrl.Result{}, err
+		}
+
 		err = generateSnippets(
+			store,
 			bootstrapSecret,
 			*m.MachineScope.Machine.Spec.Version,
-			credentialsSecret,
 			"/mnt/default/snippets/snippets/",
 			m.MachineScope,
 		)
@@ -418,7 +424,6 @@ func (m *Machine) reconcileDelete(ctx context.Context, req ctrl.Request) (ctrl.R
 		if err = task.Wait(time.Second*5, VmStopTimeout); err != nil {
 			return ctrl.Result{}, err
 		}
-
 	}
 
 	disks := vm.VirtualMachineConfig.MergeIDEs()
@@ -550,9 +555,9 @@ func vmInitializationOptions(cluster *infrastructurev1alpha1.ProxmoxCluster, mac
 // https://kubernetes.io/docs/reference/config-api/kubelet-config.v1beta1/
 // providerID: proxmoxMachine.Spec.ProviderID
 func generateSnippets(
+	store storage.Storage,
 	secret *v1.Secret,
 	version string,
-	credentialsSecret *v1.Secret,
 	storagePath string,
 	machineScope *scope.MachineScope,
 ) error {
@@ -596,25 +601,20 @@ func generateSnippets(
 
 	if machineScope.InfraMachine.Spec.NetworkUserData != "" {
 		networkFileName := fmt.Sprintf("%s-%s-network.yaml", machineScope.InfraMachine.Namespace, machineScope.InfraMachine.Name)
-		err = writeFile(
-			credentialsSecret,
-			storagePath,
-			networkFileName,
+		err = store.WriteFile(
+			filepath.Join(storagePath, networkFileName),
 			[]byte(fmt.Sprintf(`
 #cloud-config
 %s
-`, machineScope.InfraMachine.Spec.NetworkUserData)),
-		)
+`, machineScope.InfraMachine.Spec.NetworkUserData)))
 		if err != nil {
 			return err
 		}
 	}
 
 	userFileName := fmt.Sprintf("%s-%s-user.yaml", machineScope.InfraMachine.Namespace, machineScope.InfraMachine.Name)
-	err = writeFile(
-		credentialsSecret,
-		storagePath,
-		userFileName,
+	err = store.WriteFile(
+		filepath.Join(storagePath, userFileName),
 		[]byte(fmt.Sprintf(`
 #cloud-config
 %s
@@ -625,38 +625,6 @@ func generateSnippets(
 	}
 
 	return nil
-}
-
-func writeFile(credentials *v1.Secret, storagePath string, filePath string, contents []byte) error {
-	config := &ssh.ClientConfig{
-		User: string(credentials.Data["user"]),
-		Auth: []ssh.AuthMethod{
-			ssh.Password(string(credentials.Data["password"])),
-		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-	}
-	client, err := ssh.Dial("tcp", string(credentials.Data["host"]), config)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-
-	fs, err := sftp.NewClient(client)
-	if err != nil {
-		return err
-	}
-	defer fs.Close()
-
-	dstFile, err := fs.Create(fmt.Sprintf(
-		"%s/%s", storagePath, filePath,
-	))
-	if err != nil {
-		return err
-	}
-	defer dstFile.Close()
-
-	_, err = dstFile.Write(contents)
-	return err
 }
 
 // ensurePool lists the current pools for the cluster, and if a matching
