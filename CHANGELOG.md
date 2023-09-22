@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+### [0.2.5](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.2.4...v0.2.5) (2023-09-22)
+
+
+### Bug Fixes
+
+* **storage:** Remove invalid fmt.Sprintf ([f306a2e](https://github.com/launchboxio/cluster-api-provider-proxmox/commit/f306a2ef9c05c8ef1a969de9c2c8e79bfe696739))
+
 ### [0.2.4](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.2.3...v0.2.4) (2023-09-22)
 
 
