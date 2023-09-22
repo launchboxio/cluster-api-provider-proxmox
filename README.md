@@ -1,4 +1,4 @@
-# Kubernetes Cluster API Provider Proxmox (CAPP)
+# Kubernetes Cluster API Provider Proxmox (CAPPVE)
 
 <p align="left">
   <!-- Go version -->
