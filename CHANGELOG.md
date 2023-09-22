@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.0](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.0.14...v0.1.0) (2023-09-22)
+
+
+### Features
+
+* **storage:** Require snippet storage be locally mounted, rather than handle several storage mechanisms ([#44](https://github.com/launchboxio/cluster-api-provider-proxmox/issues/44)) ([f273500](https://github.com/launchboxio/cluster-api-provider-proxmox/commit/f2735006c3636d104b4af9d3a3b4c9951f599002))
+
 ### [0.0.14](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.0.13...v0.0.14) (2023-09-21)
 
 
