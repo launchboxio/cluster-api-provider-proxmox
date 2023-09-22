@@ -512,7 +512,7 @@ func getVmTemplate(px *proxmox.Client, templateName string) (*proxmox.ClusterRes
 }
 
 func vmInitializationOptions(cluster *infrastructurev1alpha1.ProxmoxCluster, machine *infrastructurev1alpha1.ProxmoxMachine) []proxmox.VirtualMachineOption {
-	cicustom := []strings{
+	cicustom := []string{
 		fmt.Sprintf(
 			"user=%s%s-%s-user.yaml",
 			cluster.Spec.Snippets.StorageUri,
