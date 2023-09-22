@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+### [0.1.1](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.1.0...v0.1.1) (2023-09-22)
+
+
+### Bug Fixes
+
+* **storage:** Rather than unlink, reconfigure the VM with an empty IDE2 ([#45](https://github.com/launchboxio/cluster-api-provider-proxmox/issues/45)) ([d1c2d54](https://github.com/launchboxio/cluster-api-provider-proxmox/commit/d1c2d54523b6fa91422b9b874719d09d93fb66bf))
+
 ## [0.1.0](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.0.14...v0.1.0) (2023-09-22)
 
 
