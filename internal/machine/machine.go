@@ -2,21 +2,18 @@ package machine
 
 import (
 	"github.com/go-logr/logr"
-	infrastructurev1alpha1 "github.com/launchboxio/cluster-api-provider-proxmox/api/v1alpha1"
+	"github.com/launchboxio/cluster-api-provider-proxmox/internal/scope"
 	"github.com/luthermonson/go-proxmox"
 	"k8s.io/client-go/tools/record"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // Represents a requested Machine scope
 type Machine struct {
-	ProxmoxClient  *proxmox.Client
-	ProxmoxMachine *infrastructurev1alpha1.ProxmoxMachine
-	Machine        *clusterv1.Machine
-	Cluster        *clusterv1.Cluster
-	ProxmoxCluster *infrastructurev1alpha1.ProxmoxCluster
-	Logger         logr.Logger
+	ProxmoxClient *proxmox.Client
+	MachineScope  *scope.MachineScope
+	ClusterScope  *scope.ClusterScope
+	Logger        logr.Logger
 	client.Client
 	Recorder record.EventRecorder
 }
