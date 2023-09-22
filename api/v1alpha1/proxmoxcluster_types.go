@@ -50,11 +50,7 @@ type ProxmoxClusterSnippetsConfig struct {
 	// Example: snippets-storage:/snippets/
 	StorageUri string `json:"storageUri"`
 
-	// Where the snippets storage is mounted locally
-	// Rather than delegate the management of various storage
-	// engines, we assume that the snippets volume is
-	// available locally
-	LocalPath string `json:"localPath,omitempty"`
+	CredentialsSecretName string `json:"credentials"`
 }
 
 // ProxmoxClusterStatus defines the observed state of ProxmoxCluster
