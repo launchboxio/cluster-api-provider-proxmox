@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+### [0.2.4](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.2.3...v0.2.4) (2023-09-22)
+
+
+### Bug Fixes
+
+* **storage:** Move storage to module, SFTP is pluggable ([f524936](https://github.com/launchboxio/cluster-api-provider-proxmox/commit/f524936397d8a8ff1f3bbb6e7676d0f6d434560d))
+
 ### [0.2.3](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.2.2...v0.2.3) (2023-09-22)
 
 
