@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"fmt"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 	v1 "k8s.io/api/core/v1"
@@ -37,9 +36,7 @@ func (s *Sftp) Close() error {
 }
 
 func (s *Sftp) WriteFile(filePath string, contents []byte) error {
-	dstFile, err := s.Client.Create(fmt.Sprintf(
-		"%s/%s", filePath,
-	))
+	dstFile, err := s.Client.Create(filePath)
 	if err != nil {
 		return err
 	}
