@@ -36,6 +36,7 @@ const (
 
 	VmConfigurationTimeout = time.Minute * 10
 	VmMigrationTimeout     = time.Minute * 10
+	VmCloneTimeout         = time.Minute * 5
 	VmStartTimeout         = time.Minute * 10
 	VmStopTimeout          = time.Minute * 10
 	VmDeleteTimeout        = time.Minute * 10
@@ -73,61 +74,11 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 	}
 
 	if m.MachineScope.InfraMachine.Spec.ProviderID == "" {
-		node, err := m.selectNode(nil)
-		if err != nil {
-			m.Logger.Error(err, "Failed selecting node for VM")
-			return ctrl.Result{}, err
-		}
-
-		// Try getting status again to prevent duplication of machines
-		if err := m.Get(ctx, req.NamespacedName, m.MachineScope.InfraMachine); err != nil {
-			m.Logger.Error(err, "Failed to get ProxmoxMachine")
-			return ctrl.Result{}, err
-		}
-		// TODO: We need to monitor the task for failure.
-		// TODO: Ocassionally, we are getting "the object has been modified", causing
-		// extra VM instances to be created //
-
-		vmid, task, err := template.Clone(&proxmox.VirtualMachineCloneOptions{
-			Name:   fmt.Sprintf("%s-%s", m.MachineScope.InfraMachine.Namespace, m.MachineScope.InfraMachine.Name),
-			Target: node.Node,
-		})
-		m.Logger.Info("Creating VM")
-		if err != nil {
-			m.Logger.Error(err, "Failed creating VM")
-			m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeWarning, err.Error(), "Failed creating VM")
-			return ctrl.Result{}, err
-		}
-
-		m.MachineScope.InfraMachine.Spec.ProviderID = fmt.Sprintf("%s%d", ProviderIDPrefix, vmid)
-		err = m.Update(ctx, m.MachineScope.InfraMachine)
-		if err != nil {
-			m.Logger.Error(err, "Failed updating ProxmoxMachine status")
-			return ctrl.Result{}, err
-		}
-
-		m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeNormal, "", "Created VM with Provider ID "+m.MachineScope.InfraMachine.Spec.ProviderID)
-
-		m.MachineScope.InfraMachine.Status.Vmid = vmid
-		conditions.MarkTrue(m.MachineScope.InfraMachine, VirtualMachineInitializing)
-
-		err = m.Status().Update(ctx, m.MachineScope.InfraMachine)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-
-		err = task.WaitFor(10)
-		if err != nil {
-			m.Logger.Error(err, "Task didn't complete in time")
-			return ctrl.Result{}, err
-		}
-
-		m.Logger.Info("Initial creation finished, requeuing for configuration")
-		return ctrl.Result{}, nil
+		return m.createVm(ctx, req, template)
 	}
 
 	vmid, err := strconv.Atoi(
-		strings.TrimPrefix(m.MachineScope.InfraMachine.Spec.ProviderID, ProviderIDPrefix),
+		strings.TrimPrefix(m.MachineScope.InfraMachine.GetProviderId(), ProviderIDPrefix),
 	)
 	if err != nil {
 		m.Logger.Error(err, "Failed parsing provider ID")
@@ -150,7 +101,7 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 
 	if vm == nil {
 		m.Logger.Info(fmt.Sprintf(
-			"Resource had VMID of %d, but it didnt exist in Proxmox. Purging and starting over",
+			"Resource had VMID of %d, but it didnt exist in Proxmox",
 			m.MachineScope.InfraMachine.Status.Vmid,
 		))
 		return ctrl.Result{RequeueAfter: time.Minute * 5}, nil
@@ -210,85 +161,7 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 	// - Migrate to a target node
 	// - Start the Virtual Machine
 	if conditions.IsTrue(m.MachineScope.InfraMachine, VirtualMachineInitializing) {
-		if m.MachineScope.Machine.Spec.Bootstrap.DataSecretName == nil {
-			m.Recorder.Event(m.MachineScope.InfraMachine, "Normal", "Bootstrap secret not created", "Waiting to start VM")
-			m.Logger.Info("No bootstrap secret found...")
-			return ctrl.Result{RequeueAfter: time.Second * 10}, nil
-		}
-		bootstrapSecret := &v1.Secret{}
-		if err := m.Get(ctx, types.NamespacedName{
-			Namespace: m.MachineScope.InfraMachine.Namespace,
-			Name:      *m.MachineScope.Machine.Spec.Bootstrap.DataSecretName,
-		}, bootstrapSecret); err != nil {
-			m.Logger.Info("Failed finding bootstrap secret")
-			return ctrl.Result{}, err
-		}
-
-		credentialsSecret := &v1.Secret{}
-		if err := m.Get(ctx, types.NamespacedName{
-			Namespace: m.MachineScope.InfraMachine.Namespace,
-			Name:      m.ClusterScope.InfraCluster.Spec.Snippets.CredentialsSecretName,
-		}, credentialsSecret); err != nil {
-			m.Logger.Info("Failed finding storage credentials")
-			return ctrl.Result{}, err
-		}
-
-		store, err := storage.SftpFromSecret(credentialsSecret)
-		if err != nil {
-			m.Logger.Error(err, "Failed creating storage client")
-			return ctrl.Result{}, err
-		}
-
-		err = generateSnippets(
-			store,
-			bootstrapSecret,
-			*m.MachineScope.Machine.Spec.Version,
-			"/mnt/default/snippets/snippets/",
-			m.MachineScope,
-		)
-		if err != nil {
-			m.Logger.Info("Failed to generate snippet for machine")
-			return ctrl.Result{}, err
-		}
-
-		task, err := vm.Config(vmInitializationOptions(m.ClusterScope.InfraCluster, m.MachineScope.InfraMachine)...)
-		if err != nil {
-			m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeWarning, err.Error(), "VM Configuration failure")
-			m.Logger.Error(err, "Failed to reconfigure VM")
-			return ctrl.Result{Requeue: false}, err
-		}
-
-		if err = task.Wait(time.Second*5, VmConfigurationTimeout); err != nil {
-			m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeWarning, err.Error(), "VM Configuration timeout")
-			m.Logger.Error(err, "Timed out waiting for VM to finish configuring")
-			return ctrl.Result{}, err
-		}
-
-		conditions.MarkFalse(
-			m.MachineScope.InfraMachine, VirtualMachineInitializing, "Completed",
-			v1beta1.ConditionSeverityNone, "VM initialization completed")
-
-		err = m.Status().Update(ctx, m.MachineScope.InfraMachine)
-		if err != nil {
-			m.Logger.Error(err, "Failed updating ProxmoxMachine status")
-			return ctrl.Result{}, err
-		}
-
-		m.Recorder.Event(m.MachineScope.InfraMachine, "Normal", "", "Starting machine")
-		task, err = vm.Start()
-		if err != nil {
-			m.Logger.Error(err, "Failed starting VM")
-			return ctrl.Result{}, err
-		}
-
-		if err = task.Wait(time.Second*5, VmStartTimeout); err != nil {
-			m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeWarning, err.Error(), "VM Start timeout")
-			m.Logger.Error(err, "Timed out waiting for VM to start")
-			return ctrl.Result{}, err
-		}
-
-		m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeNormal, "", "Machine started")
-		return ctrl.Result{}, nil
+		return m.initialize(ctx, req, vm)
 	}
 
 	// Ensure our machine is marked as Ready
@@ -301,7 +174,7 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 
 		conditions.MarkTrue(m.MachineScope.InfraMachine, "Ready")
 		err = m.Status().Update(ctx, m.MachineScope.InfraMachine)
-		return ctrl.Result{}, nil
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	// Lastly, wait for our node to get the registered providerID. Once it does,
@@ -314,10 +187,158 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 		if err != nil {
 			return ctrl.Result{RequeueAfter: time.Second * 15}, nil
 		}
-		return ctrl.Result{}, nil
+		return ctrl.Result{Requeue: true}, nil
 	}
 
-	return ctrl.Result{}, nil
+	m.MachineScope.InfraMachine.Status.State = vm.Status
+	ifaces, err := vm.AgentGetNetworkIFaces()
+	if err == nil {
+		m.MachineScope.InfraMachine.SetIpAddresses(ifaces)
+	}
+
+	err = m.Status().Update(ctx, m.MachineScope.InfraMachine)
+	return ctrl.Result{RequeueAfter: time.Minute * 1}, err
+}
+
+func (m *Machine) createVm(ctx context.Context, req ctrl.Request, template *proxmox.VirtualMachine) (ctrl.Result, error) {
+	node, err := m.selectNode(nil)
+	if err != nil {
+		m.Logger.Error(err, "Failed selecting node for VM")
+		return ctrl.Result{}, err
+	}
+
+	vmid, task, err := template.Clone(&proxmox.VirtualMachineCloneOptions{
+		Name:   fmt.Sprintf("%s-%s", m.MachineScope.InfraMachine.Namespace, m.MachineScope.InfraMachine.Name),
+		Target: node.Node,
+	})
+	if err != nil {
+		m.Logger.Error(err, "Failed creating VM")
+		m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeWarning, err.Error(), "Failed creating VM")
+		return ctrl.Result{}, err
+	}
+	err = task.Wait(time.Second*10, VmCloneTimeout)
+	if err != nil {
+		m.Logger.Error(err, "Task didn't complete in time")
+		return ctrl.Result{}, err
+	}
+
+	if task.IsFailed {
+		taskOutput, _ := task.Log(0, 1000)
+		var rawTaskOutput []string
+		for _, log := range taskOutput {
+			rawTaskOutput = append(rawTaskOutput, log)
+		}
+		m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeWarning, strings.Join(rawTaskOutput, "\n"), "Create VM task failed")
+		return ctrl.Result{}, err
+	}
+
+	// Ensure we set the ProviderID
+	// We also refetch the Machine CR to prevent issues updating status
+	if err := m.Get(ctx, req.NamespacedName, m.MachineScope.InfraMachine); err != nil {
+		m.Logger.Error(err, "Failed to get ProxmoxMachine")
+		return ctrl.Result{}, err
+	}
+	m.MachineScope.InfraMachine.Spec.ProviderID = fmt.Sprintf("%s%d", ProviderIDPrefix, vmid)
+	err = m.Update(ctx, m.MachineScope.InfraMachine)
+	if err != nil {
+		m.Logger.Error(err, "Failed updating ProxmoxMachine status")
+		return ctrl.Result{}, err
+	}
+
+	m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeNormal, "", "Created VM with Provider ID "+m.MachineScope.InfraMachine.Spec.ProviderID)
+
+	m.MachineScope.InfraMachine.Status.Vmid = vmid
+	conditions.MarkTrue(m.MachineScope.InfraMachine, VirtualMachineInitializing)
+
+	err = m.Status().Update(ctx, m.MachineScope.InfraMachine)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	m.Logger.Info("Initial creation finished, requeuing for configuration")
+	return ctrl.Result{Requeue: true}, nil
+}
+
+func (m *Machine) initialize(ctx context.Context, req ctrl.Request, vm *proxmox.VirtualMachine) (ctrl.Result, error) {
+	if m.MachineScope.Machine.Spec.Bootstrap.DataSecretName == nil {
+		m.Recorder.Event(m.MachineScope.InfraMachine, "Normal", "Bootstrap secret not created", "Waiting to start VM")
+		m.Logger.Info("No bootstrap secret found...")
+		return ctrl.Result{RequeueAfter: time.Second * 10}, nil
+	}
+	bootstrapSecret := &v1.Secret{}
+	if err := m.Get(ctx, types.NamespacedName{
+		Namespace: m.MachineScope.InfraMachine.Namespace,
+		Name:      *m.MachineScope.Machine.Spec.Bootstrap.DataSecretName,
+	}, bootstrapSecret); err != nil {
+		m.Logger.Info("Failed finding bootstrap secret")
+		return ctrl.Result{}, err
+	}
+
+	credentialsSecret := &v1.Secret{}
+	if err := m.Get(ctx, types.NamespacedName{
+		Namespace: m.ClusterScope.InfraCluster.Spec.Snippets.CredentialsRef.Namespace,
+		Name:      m.ClusterScope.InfraCluster.Spec.Snippets.CredentialsRef.Name,
+	}, credentialsSecret); err != nil {
+		m.Logger.Info("Failed finding storage credentials")
+		return ctrl.Result{}, err
+	}
+
+	store, err := storage.SftpFromSecret(credentialsSecret)
+	if err != nil {
+		m.Logger.Error(err, "Failed creating storage client")
+		return ctrl.Result{}, err
+	}
+
+	err = generateSnippets(
+		store,
+		bootstrapSecret,
+		*m.MachineScope.Machine.Spec.Version,
+		"/mnt/default/snippets/snippets/",
+		m.MachineScope,
+	)
+	if err != nil {
+		m.Logger.Info("Failed to generate snippet for machine")
+		return ctrl.Result{}, err
+	}
+
+	task, err := vm.Config(vmInitializationOptions(m.ClusterScope.InfraCluster, m.MachineScope.InfraMachine)...)
+	if err != nil {
+		m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeWarning, err.Error(), "VM Configuration failure")
+		m.Logger.Error(err, "Failed to reconfigure VM")
+		return ctrl.Result{Requeue: false}, err
+	}
+
+	if err = task.Wait(time.Second*5, VmConfigurationTimeout); err != nil {
+		m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeWarning, err.Error(), "VM Configuration timeout")
+		m.Logger.Error(err, "Timed out waiting for VM to finish configuring")
+		return ctrl.Result{}, err
+	}
+
+	conditions.MarkFalse(
+		m.MachineScope.InfraMachine, VirtualMachineInitializing, "Completed",
+		v1beta1.ConditionSeverityNone, "VM initialization completed")
+
+	err = m.Status().Update(ctx, m.MachineScope.InfraMachine)
+	if err != nil {
+		m.Logger.Error(err, "Failed updating ProxmoxMachine status")
+		return ctrl.Result{}, err
+	}
+
+	m.Recorder.Event(m.MachineScope.InfraMachine, "Normal", "", "Starting machine")
+	task, err = vm.Start()
+	if err != nil {
+		m.Logger.Error(err, "Failed starting VM")
+		return ctrl.Result{}, err
+	}
+
+	if err = task.Wait(time.Second*5, VmStartTimeout); err != nil {
+		m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeWarning, err.Error(), "VM Start timeout")
+		m.Logger.Error(err, "Timed out waiting for VM to start")
+		return ctrl.Result{}, err
+	}
+
+	m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeNormal, "", "Machine started")
+	return ctrl.Result{Requeue: true}, nil
 }
 
 func (m *Machine) getRESTClient(clusterName string) (*kubernetes.Clientset, error) {
@@ -387,7 +408,7 @@ func (m *Machine) attachNode(ctx context.Context) (ctrl.Result, error) {
 			return ctrl.Result{}, err
 		}
 	}
-	return ctrl.Result{}, nil
+	return ctrl.Result{Requeue: true}, nil
 }
 
 func (m *Machine) reconcileDelete(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -432,20 +453,19 @@ func (m *Machine) reconcileDelete(ctx context.Context, req ctrl.Request) (ctrl.R
 			m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeNormal, "", "Unlinking Disk "+disk)
 			m.Logger.Info("Unlinking disk", "Disk", disk)
 
-			task, err := vm.Config(proxmox.VirtualMachineOption{
-				Name:  disk,
-				Value: "none,media=cdrom",
-			})
+			task, err := vm.UnlinkDisk(disk, true)
 			if err != nil {
-				m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeWarning, err.Error(), "VM Configuration failure")
-				m.Logger.Error(err, "Failed to reconfigure VM")
+				m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeWarning, err.Error(), "Failed unlinking disk")
+				m.Logger.Error(err, "Failed unlinking disk")
 				return ctrl.Result{Requeue: false}, err
 			}
 
-			if err = task.Wait(time.Second*5, VmConfigurationTimeout); err != nil {
-				m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeWarning, err.Error(), "VM Configuration timeout")
-				m.Logger.Error(err, "Timed out waiting for VM to finish configuring")
-				return ctrl.Result{}, err
+			if task != nil {
+				if err = task.Wait(time.Second*5, VmConfigurationTimeout); err != nil {
+					m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeWarning, err.Error(), "Timeout unlinking disk")
+					m.Logger.Error(err, "Timed out waiting for disk to unlink")
+					return ctrl.Result{}, err
+				}
 			}
 		}
 	}

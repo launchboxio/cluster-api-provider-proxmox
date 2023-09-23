@@ -22,7 +22,10 @@ import (
 	"fmt"
 	"github.com/launchboxio/cluster-api-provider-proxmox/internal/scope"
 	"github.com/luthermonson/go-proxmox"
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
+	"time"
 
 	//"k8s.io/apimachinery/pkg/types"
 	"net/http"
@@ -31,7 +34,6 @@ import (
 	//"github.com/Telmate/proxmox-api-go/proxmox"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
-	"os"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -70,19 +72,6 @@ type ProxmoxMachineReconciler struct {
 func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	contextLogger := log.FromContext(ctx)
 
-	insecureHTTPClient := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
-			},
-		},
-	}
-
-	proxmoxClient := proxmox.NewClient(os.Getenv("PM_API_URL"),
-		proxmox.WithAPIToken(os.Getenv("PM_API_TOKEN_ID"), os.Getenv("PM_API_TOKEN")),
-		proxmox.WithHTTPClient(insecureHTTPClient),
-	)
-
 	proxmoxMachine := &infrastructurev1alpha1.ProxmoxMachine{}
 	if err := r.Get(ctx, req.NamespacedName, proxmoxMachine); err != nil {
 		if errors.IsNotFound(err) {
@@ -111,7 +100,7 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	if annotations.IsPaused(cluster, proxmoxMachine) {
-		contextLogger.Info("ProxmoCluster or linked Cluster is marked as paused. Won't reconcile")
+		contextLogger.Info("ProxmoxCluster or linked Cluster is marked as paused. Won't reconcile")
 		return ctrl.Result{}, nil
 	}
 
@@ -129,6 +118,31 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		contextLogger.Error(getErr, "error getting proxmoxcluster", "id", proxmoxClusterName)
 		return ctrl.Result{}, fmt.Errorf("error getting proxmoxcluster: %w", getErr)
 	}
+
+	credentialsSecret := &v1.Secret{}
+	err = r.Get(ctx, types.NamespacedName{
+		Namespace: proxmoxCluster.Spec.CredentialsRef.Namespace,
+		Name:      proxmoxCluster.Spec.CredentialsRef.Name,
+	}, credentialsSecret)
+	if err != nil {
+		contextLogger.Error(err, "Failed getting Proxmox API Credentials")
+		return ctrl.Result{RequeueAfter: time.Minute * 1}, err
+	}
+
+	options := []proxmox.Option{
+		proxmox.WithAPIToken(string(credentialsSecret.Data["token_id"]), string(credentialsSecret.Data["token_secret"])),
+	}
+	if proxmoxCluster.Spec.InsecureSkipTlsVerify {
+		insecureHTTPClient := &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: true,
+				},
+			},
+		}
+		options = append(options, proxmox.WithHTTPClient(insecureHTTPClient))
+	}
+	proxmoxClient := proxmox.NewClient(string(credentialsSecret.Data["api_url"]), options...)
 
 	clusterScope := &scope.ClusterScope{
 		Cluster:      cluster,

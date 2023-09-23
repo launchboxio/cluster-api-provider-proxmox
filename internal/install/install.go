@@ -17,8 +17,10 @@ export repo=${KUBERNETES_VERSION%.*}
 apt-get update -y
 apt-get install -y apt-transport-https ca-certificates curl gnupg qemu-guest-agent wget
 
-systemctl enable qemu-guest-agent
-systemctl start qemu-guest-agent
+# We don't have a hard requirement on qemu-guest-agent
+# fork these to the background to prevent waiting
+systemctl enable qemu-guest-agent &
+systemctl start qemu-guest-agent &
 
 swapoff -a && sed -ri '/\sswap\s/s/^#?/#/' /etc/fstab
 modprobe overlay && modprobe br_netfilter

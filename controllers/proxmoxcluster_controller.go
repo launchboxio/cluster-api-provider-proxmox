@@ -25,7 +25,6 @@ import (
 	"sigs.k8s.io/cluster-api/util/annotations"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -62,23 +61,6 @@ func (r *ProxmoxClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 		contextLogger.Error(err, "Failed getting ProxmoxCluster")
 		return ctrl.Result{}, err
-	}
-
-	if !controllerutil.ContainsFinalizer(proxmoxCluster, clusterFinalizer) {
-		controllerutil.AddFinalizer(proxmoxCluster, clusterFinalizer)
-		err := r.Update(ctx, proxmoxCluster)
-		return ctrl.Result{}, err
-	}
-
-	if proxmoxCluster.GetDeletionTimestamp() != nil {
-		if controllerutil.ContainsFinalizer(proxmoxCluster, clusterFinalizer) {
-			contextLogger.Info("Delete event found for cluster finalizer")
-			// TODO: Maybe users will want to delete the pool?
-			controllerutil.RemoveFinalizer(proxmoxCluster, clusterFinalizer)
-			err := r.Update(context.TODO(), proxmoxCluster)
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{}, nil
 	}
 
 	cluster, err := util.GetOwnerCluster(ctx, r.Client, proxmoxCluster.ObjectMeta)
