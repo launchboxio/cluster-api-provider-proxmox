@@ -73,6 +73,18 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{}, err
 	}
 
+	// Set the targetNode on the spec if it doesnt exist
+	if m.MachineScope.InfraMachine.Spec.TargetNode == "" {
+		node, err := m.selectNode(nil)
+		if err != nil {
+			m.Logger.Error(err, "Failed selecting node for VM")
+			return ctrl.Result{}, err
+		}
+		m.MachineScope.InfraMachine.Spec.TargetNode = node.Node
+		err = m.Update(ctx, m.MachineScope.InfraMachine)
+		return ctrl.Result{Requeue: true}, err
+	}
+
 	if m.MachineScope.InfraMachine.Spec.ProviderID == "" {
 		return m.createVm(ctx, req, template)
 	}
@@ -201,15 +213,10 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 }
 
 func (m *Machine) createVm(ctx context.Context, req ctrl.Request, template *proxmox.VirtualMachine) (ctrl.Result, error) {
-	node, err := m.selectNode(nil)
-	if err != nil {
-		m.Logger.Error(err, "Failed selecting node for VM")
-		return ctrl.Result{}, err
-	}
 
 	vmid, task, err := template.Clone(&proxmox.VirtualMachineCloneOptions{
 		Name:   fmt.Sprintf("%s-%s", m.MachineScope.InfraMachine.Namespace, m.MachineScope.InfraMachine.Name),
-		Target: node.Node,
+		Target: m.MachineScope.InfraMachine.Spec.TargetNode,
 	})
 	if err != nil {
 		m.Logger.Error(err, "Failed creating VM")
