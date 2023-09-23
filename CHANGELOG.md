@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+### [0.2.6](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.2.5...v0.2.6) (2023-09-23)
+
+
+### Bug Fixes
+
+* **node:** Rather than select 1 at launchtime, populate the CR spec ([#47](https://github.com/launchboxio/cluster-api-provider-proxmox/issues/47)) ([7e5231c](https://github.com/launchboxio/cluster-api-provider-proxmox/commit/7e5231c1eec4a831a1eb3540c01bc7308cf9ac43))
+
 ### [0.2.5](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.2.4...v0.2.5) (2023-09-22)
 
 
