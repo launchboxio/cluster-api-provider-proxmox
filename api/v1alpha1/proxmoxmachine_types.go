@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"github.com/luthermonson/go-proxmox"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
@@ -74,13 +75,17 @@ type ProxmoxDisk struct {
 type ProxmoxMachineStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
-	Vmid       int                   `json:"vmid"`
-	Ready      bool                  `json:"ready,omitempty"`
-	Conditions []clusterv1.Condition `json:"conditions,omitempty"`
+	Vmid        int                   `json:"vmid"`
+	Ready       bool                  `json:"ready,omitempty"`
+	Conditions  []clusterv1.Condition `json:"conditions,omitempty"`
+	State       string                `json:"state,omitempty"`
+	IpAddresses map[string][]string   `json:"ipAddresses,omitempty"`
 }
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="VMID",type="string",JSONPath=".status.vmid",description="ID of the Proxmox VM"
+// +kubebuilder:printcolumn:name="State",type="string",JSONPath=".status.state",description="Last seen state of the VM"
 
 // ProxmoxMachine is the Schema for the proxmoxmachines API
 type ProxmoxMachine struct {
@@ -112,4 +117,27 @@ func (proxmoxMachine *ProxmoxMachine) GetConditions() clusterv1.Conditions {
 // SetConditions sets the conditions of ProxmoxMachine status
 func (proxmoxMachine *ProxmoxMachine) SetConditions(conditions clusterv1.Conditions) {
 	proxmoxMachine.Status.Conditions = conditions
+}
+
+func (proxmoxMachine *ProxmoxMachine) SetIpAddresses(ifaces []*proxmox.AgentNetworkIface) {
+	resultIfaces := map[string][]string{}
+	for _, iface := range ifaces {
+		resultIfaces[iface.Name] = []string{}
+		for _, addr := range iface.IPAddresses {
+			resultIfaces[iface.Name] = append(resultIfaces[iface.Name], addr.IPAddress)
+		}
+	}
+	proxmoxMachine.Status.IpAddresses = resultIfaces
+}
+
+func (proxmoxMachine *ProxmoxMachine) GetProviderId() string {
+	return proxmoxMachine.Spec.ProviderID
+}
+
+func (proxmoxMachine *ProxmoxMachine) IsReady() bool {
+	return proxmoxMachine.Status.Ready
+}
+
+func (proxmoxMachine *ProxmoxMachine) GetVmId() int {
+	return proxmoxMachine.Status.Vmid
 }

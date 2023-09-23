@@ -46,7 +46,7 @@ clusterctl init --infrastructure proxmox
 ```
 
 ### Requirements
-- SFTP connection to shared storage for snippets (https://github.com/launchboxio/cluster-api-provider-proxmox/issues/8)
+- NFS storage volume for snippets (https://github.com/launchboxio/cluster-api-provider-proxmox/issues/8)
 - Proxmox deployed as a cluster (https://github.com/launchboxio/cluster-api-provider-proxmox/issues/9)
 
 ### Credentials 
@@ -61,8 +61,8 @@ export NAMESPACE="my-cluster"
 
 kubectl create secret generic proxmox \
   --from-literal=api_url="${PM_API_URL}" \
-  --from-literal=api_token_id="${PM_API_TOKEN_ID}" \
-  --from-literal=api_token_secret="${PM_API_TOKEN_SECRET}" \
+  --from-literal=token_id="${PM_API_TOKEN_ID}" \
+  --from-literal=token_secret="${PM_API_TOKEN_SECRET}" \
   -n "${NAMESPACE}"
 ```
 

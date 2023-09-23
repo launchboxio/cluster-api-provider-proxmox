@@ -15,7 +15,16 @@ spec:
     singular: proxmoxmachine
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - description: ID of the Proxmox VM
+      jsonPath: .status.vmid
+      name: VMID
+      type: string
+    - description: Last seen state of the VM
+      jsonPath: .status.state
+      name: State
+      type: string
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: ProxmoxMachine is the Schema for the proxmoxmachines API
@@ -154,8 +163,16 @@ spec:
                   - type
                   type: object
                 type: array
+              ipAddresses:
+                additionalProperties:
+                  items:
+                    type: string
+                  type: array
+                type: object
               ready:
                 type: boolean
+              state:
+                type: string
               vmid:
                 description: 'INSERT ADDITIONAL STATUS FIELD - define observed state
                   of cluster Important: Run "make" to regenerate code after modifying

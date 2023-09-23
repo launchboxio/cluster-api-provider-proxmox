@@ -2,7 +2,7 @@
 apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
 kind: KubeadmConfigTemplate
 metadata:
-  name: testing-md-0
+  name: full-md-0
   namespace: default
 spec:
   template:
@@ -14,9 +14,9 @@ apiVersion: cluster.x-k8s.io/v1beta1
 kind: Cluster
 metadata:
   labels:
-    cni: testing-crs-0
+    cni: full-crs-0
     crs: "true"
-  name: testing
+  name: full
   namespace: default
 spec:
   clusterNetwork:
@@ -30,16 +30,16 @@ spec:
   controlPlaneRef:
     apiVersion: controlplane.cluster.x-k8s.io/v1beta1
     kind: KubeadmControlPlane
-    name: testing-control-plane
+    name: full-control-plane
   infrastructureRef:
     apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
     kind: ProxmoxCluster
-    name: testing
+    name: full
 ---
 apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
 kind: ProxmoxCluster
 metadata:
-  name: testing
+  name: full
   namespace: default
 spec:
   controlPlaneEndpoint:
@@ -47,20 +47,23 @@ spec:
     port: 6443
   snippets:
     storageUri: "snippets:snippets/"
-    credentials: storage-access
-  pool: testing
+    credentialsRef:
+      name: storage-access
+      namespace: default
+  pool: full
   tags:
-    - testing
-#  credentialsRef:
-#    name: testing
-#    namespace: default
+    - full
+  credentialsRef:
+    name: proxmox
+    namespace: default
+  insecureSkipTlsVerify: true
 ---
 apiVersion: controlplane.cluster.x-k8s.io/v1beta1
 kind: KubeadmControlPlane
 metadata:
   labels:
     nodepool: pool0
-  name: testing-control-plane
+  name: full-control-plane
   namespace: default
 spec:
   kubeadmConfigSpec:
@@ -148,7 +151,7 @@ spec:
     infrastructureRef:
       apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
       kind: ProxmoxMachineTemplate
-      name: testing-control-plane
+      name: full-control-plane
       namespace: default
   replicas: 3
   version: v1.28.1
@@ -156,10 +159,10 @@ spec:
 apiVersion: cluster.x-k8s.io/v1beta1
 kind: MachineDeployment
 metadata:
-  name: testing-md-0
+  name: full-md-0
   namespace: default
 spec:
-  clusterName: testing
+  clusterName: full
   replicas: 3
   selector:
     matchLabels: null
@@ -172,18 +175,18 @@ spec:
         configRef:
           apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
           kind: KubeadmConfigTemplate
-          name: testing-md-0
-      clusterName: testing
+          name: full-md-0
+      clusterName: full
       infrastructureRef:
         apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
         kind: ProxmoxMachineTemplate
-        name: testing-md-0
+        name: full-md-0
       version: v1.28.1
 ---
 apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
 kind: ProxmoxMachineTemplate
 metadata:
-  name: testing-control-plane
+  name: full-control-plane
   namespace: default
 spec:
   template:
@@ -201,10 +204,6 @@ spec:
       networks:
         - model: virtio
           bridge: vmbr1
-        - model: virtio
-          bridge: vmbr2
-        - model: virtio
-          bridge: vmbr3
       tags:
         - controller
       sshKeys:
@@ -219,20 +218,11 @@ spec:
             name: ens18
             subnets:
               - type: dhcp
-          - type: physical
-            name: ens19
-            subnets:
-              - type: dhcp
-          - type: physical
-            name: ens20
-            subnets:
-              - type: dhcp
-
 ---
 apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
 kind: ProxmoxMachineTemplate
 metadata:
-  name: testing-md-0
+  name: full-md-0
   namespace: default
 spec:
   template:

@@ -33,7 +33,7 @@ type ProxmoxClusterSpec struct {
 	ControlPlaneEndpoint clusterv1.APIEndpoint `json:"controlPlaneEndpoint"`
 
 	// Secret with credentials for accessing the Proxmox API
-	CredentialsRef v1.SecretReference `json:"credentialsRef,omitempty"`
+	CredentialsRef v1.SecretReference `json:"credentialsRef"`
 
 	Snippets ProxmoxClusterSnippetsConfig `json:"snippets"`
 	// The Proxmox resource pool to attach created VMs to.
@@ -42,6 +42,8 @@ type ProxmoxClusterSpec struct {
 
 	// Global tags applied to all instances for the cluster
 	Tags []string `json:"tags,omitempty"`
+
+	InsecureSkipTlsVerify bool `json:"insecureSkipTlsVerify,omitempty"`
 }
 
 type ProxmoxClusterSnippetsConfig struct {
@@ -50,7 +52,8 @@ type ProxmoxClusterSnippetsConfig struct {
 	// Example: snippets-storage:/snippets/
 	StorageUri string `json:"storageUri"`
 
-	CredentialsSecretName string `json:"credentials"`
+	// Secret containing credentials to write snippets to Proxmox Storage
+	CredentialsRef v1.SecretReference `json:"credentialsRef"`
 }
 
 // ProxmoxClusterStatus defines the observed state of ProxmoxCluster
