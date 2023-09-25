@@ -3,8 +3,9 @@ package install
 import "text/template"
 
 type PackageManagerInstallArgs struct {
-	KubernetesVersion string
-	Hostname          string
+	KubernetesVersion  string
+	Hostname           string
+	AdditionalUserData string
 }
 
 var PackageManagerInstallScript = template.Must(template.New("packages").Parse(`
@@ -59,4 +60,6 @@ apt-get install -y kubelet=$KUBERNETES_VERSION-* kubeadm=$KUBERNETES_VERSION-* k
 apt-mark hold kubelet kubeadm kubectl
 
 swapoff -a && sed -ri '/\sswap\s/s/^#?/#/' /etc/fstab
+
+{{with .AdditionalUserData}}{{.}}{{end}}
 `))
