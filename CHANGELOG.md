@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+### [0.2.8](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.2.7...v0.2.8) (2023-09-25)
+
+
+### Bug Fixes
+
+* **crd:** Generate missed manifests ([8f4bad7](https://github.com/launchboxio/cluster-api-provider-proxmox/commit/8f4bad7cab6c2d0afc7fcdaea3598e0e4371737f))
+
 ### [0.2.7](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.2.6...v0.2.7) (2023-09-25)
 
 
