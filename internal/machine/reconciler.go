@@ -597,8 +597,9 @@ func generateSnippets(
 	var packageInstall bytes.Buffer
 	hostname := machineScope.InfraMachine.Namespace + "-" + machineScope.InfraMachine.Name
 	err = install.PackageManagerInstallScript.Execute(&packageInstall, install.PackageManagerInstallArgs{
-		Hostname:          hostname,
-		KubernetesVersion: strings.Trim(version, "v"),
+		Hostname:           hostname,
+		KubernetesVersion:  strings.Trim(version, "v"),
+		AdditionalUserData: machineScope.InfraMachine.Spec.UserData,
 	})
 	bootstrapSecret.Write_Files = append(
 		bootstrapSecret.Write_Files,
