@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+### [0.2.7](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.2.6...v0.2.7) (2023-09-25)
+
+
+### Bug Fixes
+
+* **ci:** Add spec.userData to ProxmoxMachine for adding scripts to init ([#48](https://github.com/launchboxio/cluster-api-provider-proxmox/issues/48)) ([ebdb9bd](https://github.com/launchboxio/cluster-api-provider-proxmox/commit/ebdb9bdb08f49cead6a1575d99480a1fcdeb8b9e))
+
 ### [0.2.6](https://github.com/launchboxio/cluster-api-provider-proxmox/compare/v0.2.5...v0.2.6) (2023-09-23)
 
 
