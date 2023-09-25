@@ -80,8 +80,6 @@ spec:
                   type: object
                 type: array
               onboot:
-                description: Foo is an example field of ProxmoxMachineTemplate. Edit
-                  proxmoxmachinetemplate_types.go to remove/update
                 type: boolean
               providerID:
                 type: string
@@ -105,10 +103,10 @@ spec:
                   type: string
                 type: array
               targetNode:
-                description: Foo is an example field of ProxmoxMachine. Edit proxmoxmachine_types.go
-                  to remove/update
                 type: string
               template:
+                type: string
+              userData:
                 type: string
             required:
             - disks

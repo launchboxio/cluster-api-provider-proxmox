@@ -27,13 +27,8 @@ import (
 
 // ProxmoxMachineSpec defines the desired state of ProxmoxMachine
 type ProxmoxMachineSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// Foo is an example field of ProxmoxMachine. Edit proxmoxmachine_types.go to remove/update
 	TargetNode string `json:"targetNode,omitempty"`
 
-	// Foo is an example field of ProxmoxMachineTemplate. Edit proxmoxmachinetemplate_types.go to remove/update
 	OnBoot bool   `json:"onboot,omitempty"`
 	Scsihw string `json:"scsihw,omitempty"`
 
