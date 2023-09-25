@@ -26,6 +26,8 @@ QEMU VMs and LXC containers
 The Cluster API Provider Proxmox allows a Proxmox host / cluster to respond to the 
 infrastructure requests from Cluster API configurations.
 
+## Project Status
+This project is currently under active development. Breaking changes may be occur, so please use at your own risk
 ## Getting Started 
 
 Before installation, be sure to check the [Requirements]() section first, to ensure your Proxmox environment
