@@ -161,6 +161,8 @@ spec:
                   - type
                   type: object
                 type: array
+              currentTask:
+                type: string
               ipAddresses:
                 additionalProperties:
                   items:
@@ -171,6 +173,28 @@ spec:
                 type: boolean
               state:
                 type: string
+              tasks:
+                additionalProperties:
+                  properties:
+                    action:
+                      type: string
+                    endTime:
+                      type: string
+                    startTime:
+                      type: string
+                    state:
+                      type: string
+                    success:
+                      type: boolean
+                    taskId:
+                      type: string
+                    type:
+                      type: string
+                  required:
+                  - action
+                  - taskId
+                  type: object
+                type: object
               vmid:
                 description: 'INSERT ADDITIONAL STATUS FIELD - define observed state
                   of cluster Important: Run "make" to regenerate code after modifying

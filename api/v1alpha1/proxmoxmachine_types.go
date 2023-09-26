@@ -20,6 +20,8 @@ import (
 	"github.com/luthermonson/go-proxmox"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	"strconv"
+	"strings"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -71,11 +73,34 @@ type ProxmoxDisk struct {
 type ProxmoxMachineStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
-	Vmid        int                   `json:"vmid"`
-	Ready       bool                  `json:"ready,omitempty"`
-	Conditions  []clusterv1.Condition `json:"conditions,omitempty"`
-	State       string                `json:"state,omitempty"`
-	IpAddresses map[string][]string   `json:"ipAddresses,omitempty"`
+	Vmid        int                                  `json:"vmid"`
+	Ready       bool                                 `json:"ready,omitempty"`
+	Conditions  []clusterv1.Condition                `json:"conditions,omitempty"`
+	State       string                               `json:"state,omitempty"`
+	IpAddresses map[string][]string                  `json:"ipAddresses,omitempty"`
+	CurrentTask string                               `json:"currentTask,omitempty"`
+	Tasks       map[string]*ProxmoxMachineTaskStatus `json:"tasks,omitempty"`
+}
+
+type ProxmoxMachineTaskAction string
+
+const (
+	ProviderIDPrefix                          = "proxmox://"
+	CreateVm         ProxmoxMachineTaskAction = "createvm"
+	StartVm          ProxmoxMachineTaskAction = "startvm"
+	UnlinkDisk       ProxmoxMachineTaskAction = "unlinkdisk"
+	DestroyVm        ProxmoxMachineTaskAction = "destroyvm"
+	ConfigureVm      ProxmoxMachineTaskAction = "configurevm"
+)
+
+type ProxmoxMachineTaskStatus struct {
+	Type      string                   `json:"type,omitempty"`
+	State     string                   `json:"state,omitempty"`
+	StartTime string                   `json:"startTime,omitempty"`
+	EndTime   string                   `json:"endTime,omitempty"`
+	Success   bool                     `json:"success,omitempty"`
+	Action    ProxmoxMachineTaskAction `json:"action"`
+	TaskId    proxmox.UPID             `json:"taskId"`
 }
 
 //+kubebuilder:object:root=true
@@ -136,4 +161,45 @@ func (proxmoxMachine *ProxmoxMachine) IsReady() bool {
 
 func (proxmoxMachine *ProxmoxMachine) GetVmId() int {
 	return proxmoxMachine.Status.Vmid
+}
+
+func (proxmoxMachine *ProxmoxMachine) SetTask(action ProxmoxMachineTaskAction, task *proxmox.Task) {
+	if proxmoxMachine.Status.Tasks == nil {
+		proxmoxMachine.Status.Tasks = map[string]*ProxmoxMachineTaskStatus{}
+	}
+	proxmoxMachine.Status.Tasks[task.ID] = &ProxmoxMachineTaskStatus{
+		Action:    action,
+		Type:      task.Type,
+		StartTime: task.StartTime.String(),
+		EndTime:   task.EndTime.String(),
+		State:     task.Status,
+		TaskId:    task.UPID,
+	}
+}
+
+func (proxmoxMachine *ProxmoxMachine) SetActiveTask(taskId string) {
+	proxmoxMachine.Status.CurrentTask = taskId
+}
+
+func (proxmoxMachine *ProxmoxMachine) GetActiveTask() *ProxmoxMachineTaskStatus {
+	currentTaskId := proxmoxMachine.Status.CurrentTask
+	if currentTaskId == "" {
+		return nil
+	}
+
+	if val, ok := proxmoxMachine.Status.Tasks[currentTaskId]; ok {
+		return val
+	}
+
+	return nil
+}
+
+func (proxmoxMachine *ProxmoxMachine) ClearActiveTask() {
+	proxmoxMachine.Status.CurrentTask = ""
+}
+
+func (proxmoxMachine *ProxmoxMachine) GetProxmoxId() (int, error) {
+	return strconv.Atoi(
+		strings.TrimPrefix(proxmoxMachine.GetProviderId(), ProviderIDPrefix),
+	)
 }

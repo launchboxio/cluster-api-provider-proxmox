@@ -20,7 +20,6 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/utils/strings/slices"
 	"path/filepath"
-	"sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -31,7 +30,6 @@ import (
 
 const (
 	machineFinalizer           = "infrastructure.cluster.x-k8s.io/finalizer"
-	ProviderIDPrefix           = "proxmox://"
 	VirtualMachineInitializing = "VirtualMachineInitializing"
 
 	VmConfigurationTimeout = time.Minute * 10
@@ -42,6 +40,12 @@ const (
 	VmDeleteTimeout        = time.Minute * 10
 )
 
+// TODO: In general, the operator should not be waiting for tasks
+// to be completed. Instead, maybe we store the current
+// tasks somewhere, utilize Conditions for the various
+// actions, and simply check those tasks in the reconcile
+// loop. task.Wait() is adding an unecessary amount of wait
+// time between actions
 // TODO: Remove a requirement for Cluster setup. Folks should be able
 // to run ClusterAPI on a single proxmox instance
 func (m *Machine) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -85,18 +89,27 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{Requeue: true}, err
 	}
 
+	// Anytime we have a current task in progress, we just want to poll
+	// until completion, persist the data related to it, and then
+	// simply requeue the reconciliation
+	currentTask := m.MachineScope.InfraMachine.GetActiveTask()
+	if currentTask != nil {
+		m.Logger.Info("Polling task", "task", currentTask.Action)
+		return m.pollTask(currentTask)
+	}
+
+	// We don't have a Proxmox VM yet, lets go ahead and create it
 	if m.MachineScope.InfraMachine.Spec.ProviderID == "" {
 		return m.createVm(ctx, req, template)
 	}
 
-	vmid, err := strconv.Atoi(
-		strings.TrimPrefix(m.MachineScope.InfraMachine.GetProviderId(), ProviderIDPrefix),
-	)
+	vmid, err := m.MachineScope.InfraMachine.GetProxmoxId()
 	if err != nil {
 		m.Logger.Error(err, "Failed parsing provider ID")
 		return ctrl.Result{}, err
 	}
 
+	// Always ensure we add the finalizer
 	if !controllerutil.ContainsFinalizer(m.MachineScope.InfraMachine, machineFinalizer) {
 		m.Logger.Info("Attaching finalizer")
 		controllerutil.AddFinalizer(m.MachineScope.InfraMachine, machineFinalizer)
@@ -172,8 +185,24 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 	// - Setup cicustom
 	// - Migrate to a target node
 	// - Start the Virtual Machine
+	// TODO: When VM reaches "starting" state, we should simply store the task,
+	// and exit out. Currently, the operator waits for machine start to complete,
+	// before going on to the next step
 	if conditions.IsTrue(m.MachineScope.InfraMachine, VirtualMachineInitializing) {
 		return m.initialize(ctx, req, vm)
+	}
+
+	if vm.Status != proxmox.StatusVirtualMachineRunning {
+		m.Recorder.Event(m.MachineScope.InfraMachine, "Normal", "", "Starting machine")
+		task, err := vm.Start()
+		if err != nil {
+			m.Logger.Error(err, "Failed starting VM")
+			return ctrl.Result{}, err
+		}
+		m.MachineScope.InfraMachine.SetTask(infrastructurev1alpha1.StartVm, task)
+		m.MachineScope.InfraMachine.SetActiveTask(task.ID)
+		err = m.Status().Update(ctx, m.MachineScope.InfraMachine)
+		return ctrl.Result{Requeue: true}, err
 	}
 
 	// Ensure our machine is marked as Ready
@@ -212,8 +241,46 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 	return ctrl.Result{RequeueAfter: time.Minute * 1}, err
 }
 
-func (m *Machine) createVm(ctx context.Context, req ctrl.Request, template *proxmox.VirtualMachine) (ctrl.Result, error) {
+// pollTask takes any task we've set on the machine, and
+// polls it for completion, and updating any required status fields
+func (m *Machine) pollTask(currentTask *infrastructurev1alpha1.ProxmoxMachineTaskStatus) (ctrl.Result, error) {
+	task := proxmox.NewTask(currentTask.TaskId, m.ProxmoxClient)
+	err := task.Ping()
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 
+	// Task isn't completed, requeue in 5 seconds to check again
+	if !task.IsCompleted {
+		return ctrl.Result{RequeueAfter: 5}, nil
+	}
+
+	// Always propagate the current state of the task
+	m.MachineScope.InfraMachine.SetTask(currentTask.Action, task)
+	m.MachineScope.InfraMachine.ClearActiveTask()
+	// Task is completed, so we always remove the currently active task
+	if !task.IsFailed {
+		// Get logs, and add to the event
+		taskOutput, _ := task.Log(0, 1000)
+		var rawTaskOutput []string
+		for _, log := range taskOutput {
+			rawTaskOutput = append(rawTaskOutput, log)
+		}
+		m.Logger.Info("Task failed", "Action", currentTask.Action)
+		m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeWarning, strings.Join(rawTaskOutput, "\n"), "Create VM task failed")
+	} else {
+		// Do something with success
+		m.Logger.Info("Task completed", "Action", currentTask.Action)
+	}
+	err = m.Status().Update(context.TODO(), m.MachineScope.InfraMachine)
+	return ctrl.Result{RequeueAfter: time.Second * 5}, err
+}
+
+// createVm will create the new Proxmox QEMU VM, and update various status / spec fields
+// with the respective VMID on creation. The clone operation must block, as multiple clones
+// cannot execute in parallel
+func (m *Machine) createVm(ctx context.Context, req ctrl.Request, template *proxmox.VirtualMachine) (ctrl.Result, error) {
+	m.Logger.Info("Creating Virtual Machine")
 	vmid, task, err := template.Clone(&proxmox.VirtualMachineCloneOptions{
 		Name:   fmt.Sprintf("%s-%s", m.MachineScope.InfraMachine.Namespace, m.MachineScope.InfraMachine.Name),
 		Target: m.MachineScope.InfraMachine.Spec.TargetNode,
@@ -223,49 +290,36 @@ func (m *Machine) createVm(ctx context.Context, req ctrl.Request, template *prox
 		m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeWarning, err.Error(), "Failed creating VM")
 		return ctrl.Result{}, err
 	}
-	err = task.Wait(time.Second*10, VmCloneTimeout)
-	if err != nil {
-		m.Logger.Error(err, "Task didn't complete in time")
+	if err = task.Wait(time.Second*5, VmStartTimeout); err != nil {
+		m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeWarning, err.Error(), "VM Start timeout")
+		m.Logger.Error(err, "Timed out waiting for VM to start")
 		return ctrl.Result{}, err
 	}
 
-	if task.IsFailed {
-		taskOutput, _ := task.Log(0, 1000)
-		var rawTaskOutput []string
-		for _, log := range taskOutput {
-			rawTaskOutput = append(rawTaskOutput, log)
-		}
-		m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeWarning, strings.Join(rawTaskOutput, "\n"), "Create VM task failed")
-		return ctrl.Result{}, err
-	}
-
-	// Ensure we set the ProviderID
-	// We also refetch the Machine CR to prevent issues updating status
-	if err := m.Get(ctx, req.NamespacedName, m.MachineScope.InfraMachine); err != nil {
-		m.Logger.Error(err, "Failed to get ProxmoxMachine")
-		return ctrl.Result{}, err
-	}
-	m.MachineScope.InfraMachine.Spec.ProviderID = fmt.Sprintf("%s%d", ProviderIDPrefix, vmid)
-	err = m.Update(ctx, m.MachineScope.InfraMachine)
-	if err != nil {
-		m.Logger.Error(err, "Failed updating ProxmoxMachine status")
-		return ctrl.Result{}, err
-	}
-
-	m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeNormal, "", "Created VM with Provider ID "+m.MachineScope.InfraMachine.Spec.ProviderID)
-
+	// Let's just get one more time, to be sure
+	_ = m.Get(context.TODO(), req.NamespacedName, m.MachineScope.InfraMachine)
+	m.MachineScope.InfraMachine.Spec.ProviderID = fmt.Sprintf("%s%d", infrastructurev1alpha1.ProviderIDPrefix, vmid)
+	m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeNormal, "", "Created VM with Provider ID "+m.MachineScope.InfraMachine.GetProviderId())
 	m.MachineScope.InfraMachine.Status.Vmid = vmid
-	conditions.MarkTrue(m.MachineScope.InfraMachine, VirtualMachineInitializing)
 
-	err = m.Status().Update(ctx, m.MachineScope.InfraMachine)
-	if err != nil {
+	conditions.MarkTrue(m.MachineScope.InfraMachine, VirtualMachineInitializing)
+	m.Logger.Info("Updating conditions")
+	if err = m.Status().Update(ctx, m.MachineScope.InfraMachine); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	m.Logger.Info("Initial creation finished, requeuing for configuration")
+	// Get the resource again, and ensure we can update the spec
+	if err := m.Get(ctx, req.NamespacedName, m.MachineScope.InfraMachine); err != nil {
+		return ctrl.Result{}, err
+	}
+	m.Logger.Info("Updating status")
+	if err = m.Update(ctx, m.MachineScope.InfraMachine); err != nil {
+		return ctrl.Result{}, err
+	}
 	return ctrl.Result{Requeue: true}, nil
 }
 
+// initialize generates snippets, and configures the machine to match the Machine spec
 func (m *Machine) initialize(ctx context.Context, req ctrl.Request, vm *proxmox.VirtualMachine) (ctrl.Result, error) {
 	if m.MachineScope.Machine.Spec.Bootstrap.DataSecretName == nil {
 		m.Recorder.Event(m.MachineScope.InfraMachine, "Normal", "Bootstrap secret not created", "Waiting to start VM")
@@ -315,37 +369,11 @@ func (m *Machine) initialize(ctx context.Context, req ctrl.Request, vm *proxmox.
 		return ctrl.Result{Requeue: false}, err
 	}
 
-	if err = task.Wait(time.Second*5, VmConfigurationTimeout); err != nil {
-		m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeWarning, err.Error(), "VM Configuration timeout")
-		m.Logger.Error(err, "Timed out waiting for VM to finish configuring")
-		return ctrl.Result{}, err
-	}
-
-	conditions.MarkFalse(
-		m.MachineScope.InfraMachine, VirtualMachineInitializing, "Completed",
-		v1beta1.ConditionSeverityNone, "VM initialization completed")
-
+	m.MachineScope.InfraMachine.SetTask(infrastructurev1alpha1.ConfigureVm, task)
+	m.MachineScope.InfraMachine.SetActiveTask(task.ID)
 	err = m.Status().Update(ctx, m.MachineScope.InfraMachine)
-	if err != nil {
-		m.Logger.Error(err, "Failed updating ProxmoxMachine status")
-		return ctrl.Result{}, err
-	}
+	return ctrl.Result{RequeueAfter: time.Second * 5}, err
 
-	m.Recorder.Event(m.MachineScope.InfraMachine, "Normal", "", "Starting machine")
-	task, err = vm.Start()
-	if err != nil {
-		m.Logger.Error(err, "Failed starting VM")
-		return ctrl.Result{}, err
-	}
-
-	if err = task.Wait(time.Second*5, VmStartTimeout); err != nil {
-		m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeWarning, err.Error(), "VM Start timeout")
-		m.Logger.Error(err, "Timed out waiting for VM to start")
-		return ctrl.Result{}, err
-	}
-
-	m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeNormal, "", "Machine started")
-	return ctrl.Result{Requeue: true}, nil
 }
 
 func (m *Machine) getRESTClient(clusterName string) (*kubernetes.Clientset, error) {
@@ -421,9 +449,7 @@ func (m *Machine) attachNode(ctx context.Context) (ctrl.Result, error) {
 func (m *Machine) reconcileDelete(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	// TODO: Perform out of band cleanup
 	m.Logger.Info("Cleaning up machine for finalizer")
-	vmid, err := strconv.Atoi(
-		strings.TrimPrefix(m.MachineScope.InfraMachine.Spec.ProviderID, ProviderIDPrefix),
-	)
+	vmid, err := m.MachineScope.InfraMachine.GetProxmoxId()
 	if err != nil {
 		m.Logger.Error(err, "Failed parsing provider ID")
 		return ctrl.Result{}, err
