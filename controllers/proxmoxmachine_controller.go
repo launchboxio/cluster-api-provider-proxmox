@@ -119,6 +119,11 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, fmt.Errorf("error getting proxmoxcluster: %w", getErr)
 	}
 
+	if !proxmoxCluster.Status.Ready {
+		contextLogger.Info("Waiting for cluster to be marked as Ready")
+		return ctrl.Result{RequeueAfter: time.Second * 15}, nil
+	}
+
 	credentialsSecret := &v1.Secret{}
 	err = r.Get(ctx, types.NamespacedName{
 		Namespace: proxmoxCluster.Spec.CredentialsRef.Namespace,
@@ -130,8 +135,12 @@ func (r *ProxmoxMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	options := []proxmox.Option{
-		proxmox.WithAPIToken(string(credentialsSecret.Data["token_id"]), string(credentialsSecret.Data["token_secret"])),
+		proxmox.WithCredentials(&proxmox.Credentials{
+			Username: string(credentialsSecret.Data["username"]),
+			Password: string(credentialsSecret.Data["password"]),
+		}),
 	}
+
 	if proxmoxCluster.Spec.InsecureSkipTlsVerify {
 		insecureHTTPClient := &http.Client{
 			Transport: &http.Transport{

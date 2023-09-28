@@ -45,11 +45,6 @@ spec:
   controlPlaneEndpoint:
     host: 172.30.101.2
     port: 6443
-  snippets:
-    storageUri: "snippets:snippets/"
-    credentialsRef:
-      name: storage-access
-      namespace: default
   pool: full
   tags:
     - full

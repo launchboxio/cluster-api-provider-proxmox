@@ -35,7 +35,6 @@ type ProxmoxClusterSpec struct {
 	// Secret with credentials for accessing the Proxmox API
 	CredentialsRef v1.SecretReference `json:"credentialsRef"`
 
-	Snippets ProxmoxClusterSnippetsConfig `json:"snippets"`
 	// The Proxmox resource pool to attach created VMs to.
 	// If it doesnt exist, operator will create it first
 	Pool string `json:"pool,omitempty"`
@@ -46,22 +45,12 @@ type ProxmoxClusterSpec struct {
 	InsecureSkipTlsVerify bool `json:"insecureSkipTlsVerify,omitempty"`
 }
 
-type ProxmoxClusterSnippetsConfig struct {
-	// Configure the base URI for mounting the
-	// snippets storage on VMs
-	// Example: snippets-storage:/snippets/
-	StorageUri string `json:"storageUri"`
-
-	// Secret containing credentials to write snippets to Proxmox Storage
-	CredentialsRef v1.SecretReference `json:"credentialsRef"`
-}
-
 // ProxmoxClusterStatus defines the observed state of ProxmoxCluster
 type ProxmoxClusterStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
-	Ready bool `json:"ready"`
-
+	Ready          bool                     `json:"ready"`
+	StorageReady   bool                     `json:"storageReady,omitempty"`
 	Conditions     clusterv1.Conditions     `json:"conditions,omitempty"`
 	FailureDomains clusterv1.FailureDomains `json:"failureDomains,omitempty"`
 }

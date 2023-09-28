@@ -68,30 +68,6 @@ spec:
                 description: The Proxmox resource pool to attach created VMs to. If
                   it doesnt exist, operator will create it first
                 type: string
-              snippets:
-                properties:
-                  credentialsRef:
-                    description: Secret containing credentials to write snippets to
-                      Proxmox Storage
-                    properties:
-                      name:
-                        description: name is unique within a namespace to reference
-                          a secret resource.
-                        type: string
-                      namespace:
-                        description: namespace defines the space within which the
-                          secret name must be unique.
-                        type: string
-                    type: object
-                    x-kubernetes-map-type: atomic
-                  storageUri:
-                    description: 'Configure the base URI for mounting the snippets
-                      storage on VMs Example: snippets-storage:/snippets/'
-                    type: string
-                required:
-                - credentialsRef
-                - storageUri
-                type: object
               tags:
                 description: Global tags applied to all instances for the cluster
                 items:
@@ -100,7 +76,6 @@ spec:
             required:
             - controlPlaneEndpoint
             - credentialsRef
-            - snippets
             type: object
           status:
             description: ProxmoxClusterStatus defines the observed state of ProxmoxCluster
@@ -174,6 +149,8 @@ spec:
                 description: 'INSERT ADDITIONAL STATUS FIELD - define observed state
                   of cluster Important: Run "make" to regenerate code after modifying
                   this file'
+                type: boolean
+              storageReady:
                 type: boolean
             required:
             - ready
