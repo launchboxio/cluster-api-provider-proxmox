@@ -94,10 +94,9 @@ func (l *Local) RemoveFile(filePath string) error {
 func (l *Local) sendCommand(ctx context.Context, command string) ([]string, int, error) {
 	var out []string
 	done := make(chan error, 1)
+	defer close(done)
 
 	go func() {
-		defer close(done)
-
 		for {
 			select {
 			case recvErr := <-l.errs:

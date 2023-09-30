@@ -18,11 +18,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/utils/strings/slices"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -71,6 +69,7 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 	// until completion, persist the data related to it, and then
 	// simply requeue the reconciliation
 	currentTask := m.MachineScope.InfraMachine.GetActiveTask()
+	fmt.Println(currentTask)
 	if currentTask != nil {
 		m.Logger.Info("Polling task", "task", currentTask.Action)
 		return m.pollTask(currentTask)
@@ -110,47 +109,6 @@ func (m *Machine) reconcileCreate(ctx context.Context, req ctrl.Request) (ctrl.R
 			m.MachineScope.InfraMachine.Status.Vmid,
 		))
 		return ctrl.Result{RequeueAfter: time.Minute * 5}, nil
-	}
-
-	// Attach tags
-	tags := append(m.MachineScope.InfraMachine.Spec.Tags, m.ClusterScope.InfraCluster.Spec.Tags...)
-	for _, tag := range tags {
-		if !vm.HasTag(tag) {
-			m.Logger.Info("Adding tag to VM instance")
-			_, err := vm.AddTag(tag)
-			if err != nil {
-				m.Logger.Error(err, "Failed adding tag to VM")
-			}
-		}
-	}
-
-	// If the user has provided a resource pool, attach the
-	// created VM to the specified pool
-	if m.ClusterScope.InfraCluster.Spec.Pool != "" {
-		pool, err := m.ensurePool(m.ClusterScope.InfraCluster.Spec.Pool)
-		if err != nil {
-			m.Recorder.Event(m.MachineScope.InfraMachine, v1.EventTypeWarning, err.Error(), "Failed getting Resource Pool: %v")
-			m.Logger.Error(err, "Failed to ensure VM pool")
-			return ctrl.Result{}, err
-		}
-
-		poolMembers := []string{}
-		for _, member := range pool.Members {
-			poolMembers = append(poolMembers, strconv.FormatUint(member.VMID, 10))
-		}
-
-		memberId := strconv.FormatUint(uint64(vm.VMID), 10)
-		if !slices.Contains(poolMembers, memberId) {
-			m.Logger.Info("Adding VM to resource pool")
-			poolMembers = append(poolMembers, memberId)
-			err = pool.Update(&proxmox.PoolUpdateOption{
-				VirtualMachines: memberId,
-			})
-			if err != nil {
-				return ctrl.Result{}, err
-			}
-			m.Recorder.Event(m.MachineScope.InfraMachine, "Normal", "", "Added to resource pool "+pool.PoolID)
-		}
 	}
 
 	if vm.Status != proxmox.StatusVirtualMachineRunning {
@@ -330,10 +288,6 @@ func (m *Machine) createVm(ctx context.Context, req ctrl.Request) (ctrl.Result, 
 	m.Logger.Info("Machine resource updated")
 
 	return ctrl.Result{Requeue: true}, nil
-}
-
-func getVmOptions(m *Machine) []proxmox.VirtualMachineOption {
-	return []proxmox.VirtualMachineOption{}
 }
 
 func (m *Machine) getRESTClient(clusterName string) (*kubernetes.Clientset, error) {
@@ -535,10 +489,27 @@ func vmInitializationOptions(cluster *infrastructurev1alpha1.ProxmoxCluster, mac
 		{Name: "name", Value: machine.Name},
 		{Name: "pool", Value: cluster.Spec.Pool},
 		{Name: "tags", Value: strings.Join(tags, ",")},
-		{Name: "ide0", Value: fmt.Sprintf("isos:iso/ubuntu-20.04-server-cloudimg-amd64.img,media=cdrom")},
 		{Name: "ide2", Value: fmt.Sprintf("file=%s:cloudinit,media=cdrom", cluster.Name)},
-		{Name: "scsi0", Value: fmt.Sprintf("storage:32GB")},
 		{Name: "onboot", Value: 1},
+		{Name: "scsihw", Value: "virtio-scsi-pci"},
+		// TODO: This ends up giving us a soft requirement on
+		// scsi0 being available. Might want to adjust at some point
+		{Name: "boot", Value: "order=scsi0"},
+		{Name: "serial0", Value: "socket"},
+		{Name: "vga", Value: "serial0"},
+	}
+
+	for idx, disk := range machine.Spec.Disks {
+		// Use the specified storage, otherwise,
+		// default to the storage for the cluster
+		diskStorage := disk.Storage
+		if diskStorage == "" {
+			diskStorage = cluster.Name
+		}
+		options = append(options, proxmox.VirtualMachineOption{
+			Name:  fmt.Sprintf("scsi%d", idx),
+			Value: fmt.Sprintf("file=%s:%d,import-from=isos:images/ubuntu-20.04-server-cloudimg-amd64.img", disk.Storage, disk.Size),
+		})
 	}
 
 	for idx, network := range machine.Spec.Networks {
@@ -623,20 +594,4 @@ func generateSnippets(
 	}
 
 	return nil
-}
-
-// ensurePool lists the current pools for the cluster, and if a matching
-// pool is found, returns a handle to it. If its not found, we create a
-// new resource pool, returning that to the caller
-func (m *Machine) ensurePool(poolId string) (*proxmox.Pool, error) {
-	pool, err := m.ProxmoxClient.Pool(poolId)
-	if err != nil {
-		err = m.ProxmoxClient.NewPool(poolId, m.ClusterScope.Cluster.Name)
-		if err != nil {
-			return nil, err
-		}
-
-		return m.ProxmoxClient.Pool(poolId)
-	}
-	return pool, nil
 }

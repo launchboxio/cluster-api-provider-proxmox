@@ -64,7 +64,7 @@ type ProxmoxNetwork struct {
 type ProxmoxDisk struct {
 	Type        string `json:"type,omitempty"`
 	Storage     string `json:"storage,omitempty"`
-	Size        string `json:"size,omitempty"`
+	Size        int    `json:"size,omitempty"`
 	StorageType string `json:"storageType,omitempty"`
 	Backup      bool   `json:"backup,omitempty"`
 }

@@ -193,7 +193,7 @@ spec:
         cpuSockets: 1
       disks:
         - type: scsi
-          size: "32G"
+          size: 32
           storage: "storage"
       scsihw: "virtio-scsi-pci"
       networks:
@@ -229,7 +229,7 @@ spec:
         cpuSockets: 1
       disks:
         - type: scsi
-          size: "32G"
+          size: 32
           storage: "storage"
       scsihw: "virtio-scsi-pci"
       networks:

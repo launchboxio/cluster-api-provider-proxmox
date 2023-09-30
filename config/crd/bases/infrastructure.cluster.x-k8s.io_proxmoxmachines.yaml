@@ -50,7 +50,7 @@ spec:
                     backup:
                       type: boolean
                     size:
-                      type: string
+                      type: integer
                     storage:
                       type: string
                     storageType:
