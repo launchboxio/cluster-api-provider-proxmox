@@ -55,7 +55,7 @@ clusterctl init --infrastructure proxmox
 #### Proxmox API 
 
 ```bash
-export PM_API_URL=https://proxmox:8006/api2/json
+export PM_API_URL=https://pr`oxmox:8006/api2/json
 export PM_USERNAME='root@pam'
 export PM_PASSWORD="xxxxxxxxxxx"w
 export NAMESPACE="my-cluster"
@@ -66,5 +66,3 @@ kubectl create secret generic proxmox \
   --from-literal=password="${PM_PASSWORD}" \
   -n "${NAMESPACE}"
 ```
-
-

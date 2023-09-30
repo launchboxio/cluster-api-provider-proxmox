@@ -136,7 +136,7 @@ func (r *ProxmoxClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				Storage: proxmoxCluster.Name,
 				Mkdir:   true,
 				Type:    "dir",
-				Content: "snippets",
+				Content: "images,snippets",
 				Path:    fmt.Sprintf("/snippets/%s", proxmoxCluster.Name),
 			}
 			err = proxmoxClient.Post("/storage", &storage, nil)
