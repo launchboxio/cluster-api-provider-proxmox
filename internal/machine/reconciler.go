@@ -508,7 +508,7 @@ func vmInitializationOptions(cluster *infrastructurev1alpha1.ProxmoxCluster, mac
 		}
 		options = append(options, proxmox.VirtualMachineOption{
 			Name:  fmt.Sprintf("scsi%d", idx),
-			Value: fmt.Sprintf("file=%s:%d,import-from=isos:images/ubuntu-20.04-server-cloudimg-amd64.img", disk.Storage, disk.Size),
+			Value: fmt.Sprintf("file=%s,import-from=/mnt/pve/isos/images/ubuntu-20.04-server-cloudimg-amd64.img", disk.Storage, disk.Size),
 		})
 	}
 
